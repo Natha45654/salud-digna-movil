@@ -33,6 +33,9 @@ class FakeCentralApi {
   int version = 2;
   final refs = <String, String>{'studyId': fakeStudyId};
   final idempotency = <String, String>{};
+
+  /// Trámites creados con POST /mobile/journeys: en DRAFT y SELECT_STUDY.
+  final created = <String>{};
   final events = <String, String>{};
   bool linked = true;
 
@@ -113,7 +116,27 @@ class FakeCentralApi {
       final k = req.headers['Idempotency-Key'];
       if (k == null) return _json({'message': 'Idempotency-Key requerido'}, 400);
       final id = idempotency.putIfAbsent(k, () => '00000000-0000-4000-8000-00000000090${idempotency.length}');
+      created.add(id);
       return _json({'id': id, 'status': 'DRAFT'}, 201);
+    }
+    final createdMatch = RegExp(r'^/mobile/journeys/([0-9a-f-]{36})(/context|/history)?$').firstMatch(path);
+    if (req.method == 'GET' && createdMatch != null && created.contains(createdMatch[1])) {
+      final id = createdMatch[1]!;
+      return switch (createdMatch[2]) {
+        '/context' => _json({
+            'journeyId': id, 'currentStep': 'SELECT_STUDY', 'version': 1,
+            'externalRefs': <String, String>{}, 'updatedAt': '2026-11-25T16:00:00.000Z',
+          }),
+        '/history' => _json({
+            'items': [
+              {'id': 'c1', 'type': 'JOURNEY_CREATED', 'producerCode': 'demo-mobile',
+               'occurredAt': '2026-11-25T16:00:00.000Z', 'receivedAt': '2026-11-25T16:00:00.100Z',
+               'schemaVersion': 1, 'data': {'version': 1}},
+            ],
+          }),
+        _ => _json({'id': id, 'type': 'APPOINTMENT', 'status': 'DRAFT',
+            'createdAt': '2026-11-25T16:00:00.000Z', 'updatedAt': '2026-11-25T16:00:00.000Z'}),
+      };
     }
     if (!ownsJourney) return _json({'statusCode': 404, 'message': 'Not Found'}, 404);
     if (key == 'GET /mobile/journeys/$fakeJourneyId') return _json(_summary);

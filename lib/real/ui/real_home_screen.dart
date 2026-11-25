@@ -6,20 +6,16 @@ import '../../ui/layout/window_size.dart';
 import '../../widgets/common.dart';
 import '../../widgets/patient_blocks.dart';
 import '../api_models.dart';
+import '../real_state.dart';
 import 'real_app.dart';
 import 'real_connection_screen.dart';
+import 'real_journey_screen.dart';
 
 /// Inicio del modo real: trámites activos del paciente según
 /// `GET /mobile/journeys`, con su estudio y clínica cuando el contexto se
 /// pudo leer.
 class RealHomeScreen extends StatefulWidget {
-  /// Abre un trámite. Null mientras la pantalla del trámite no existe.
-  final void Function(BuildContext context, JourneySummary journey)? onOpen;
-
-  /// Acción "Nueva cita". Null mientras la pantalla del trámite no existe.
-  final Future<void> Function(BuildContext context)? onNew;
-
-  const RealHomeScreen({super.key, this.onOpen, this.onNew});
+  const RealHomeScreen({super.key});
 
   @override
   State<RealHomeScreen> createState() => _RealHomeScreenState();
@@ -32,6 +28,44 @@ class _RealHomeScreenState extends State<RealHomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) RealScope.of(context).refreshJourneys();
     });
+  }
+
+  Future<void> _open(JourneySummary j, {bool pickStudy = false}) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RealJourneyScreen(journeyId: j.id, pickStudyOnOpen: pickStudy),
+      ),
+    );
+    if (mounted && RealScope.of(context).isLoggedIn) RealScope.of(context).refreshJourneys();
+  }
+
+  bool _creating = false;
+
+  /// "Nueva cita": POST /mobile/journeys y abre el trámite en el selector de
+  /// estudio. Si la creación queda pendiente, se reintenta con la misma clave.
+  Future<void> _new() async {
+    final state = RealScope.of(context);
+    setState(() => _creating = true);
+    final r = await state.createJourney();
+    if (!mounted) return;
+    setState(() => _creating = false);
+    switch (r.status) {
+      case WriteStatus.done:
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RealJourneyScreen(journeyId: r.value!, pickStudyOnOpen: true),
+          ),
+        );
+        if (mounted && state.isLoggedIn) state.refreshJourneys();
+      case WriteStatus.sessionExpired:
+        break;
+      case WriteStatus.pending:
+        showSnack(context,
+            '${r.message ?? 'No se pudo crear.'} Toca "Nueva cita" otra vez para reintentar.',
+            error: true);
+      case WriteStatus.conflict || WriteStatus.rejected:
+        showSnack(context, r.message ?? 'No se pudo crear el trámite.', error: true);
+    }
   }
 
   Future<void> _confirmLogout() async {
@@ -88,7 +122,7 @@ class _RealHomeScreenState extends State<RealHomeScreen> {
             studies: state.studies,
             clinics: state.clinics,
             pending: state.pendingFor(j.id) != null,
-            onTap: widget.onOpen == null ? null : () => widget.onOpen!(context, j),
+            onTap: () => _open(j),
           ),
           const SizedBox(height: Space.sm),
         ]
@@ -105,14 +139,14 @@ class _RealHomeScreenState extends State<RealHomeScreen> {
           title: 'No tienes trámites activos',
           message: 'Los trámites que inicies en cualquier canal aparecerán aquí.',
         ),
-      if (widget.onNew != null) ...[
-        const SizedBox(height: Space.lg),
-        FilledButton.tonalIcon(
-          onPressed: () => widget.onNew!(context),
-          icon: const Icon(Icons.add),
-          label: const Text('Nueva cita'),
-        ),
-      ],
+      const SizedBox(height: Space.lg),
+      FilledButton.tonalIcon(
+        onPressed: _creating ? null : _new,
+        icon: _creating
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5))
+            : const Icon(Icons.add),
+        label: Text(state.pendingCreate == null ? 'Nueva cita' : 'Reintentar nueva cita'),
+      ),
       const SizedBox(height: Space.lg),
     ];
 
