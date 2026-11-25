@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../core/theme.dart';
 import '../ui/layout/window_size.dart';
 import '../models/models.dart';
+import '../real/api_models.dart';
 
 // ----------------------------------------------------------------- formato
 
@@ -91,6 +92,9 @@ Color statusColor(BuildContext context, String status) {
     JourneyStatus.confirmado => s.primary,
     JourneyStatus.cancelado => s.error,
     JourneyStatus.pendienteConfirmacion => s.tertiary,
+    ApiJourneyStatus.completed => s.primary,
+    ApiJourneyStatus.cancelled => s.error,
+    ApiJourneyStatus.pendingConfirmation => s.tertiary,
     _ => s.secondary,
   };
 }
@@ -102,6 +106,12 @@ String statusHuman(String status) => switch (status) {
       JourneyStatus.pendienteConfirmacion => 'Lista para confirmar',
       JourneyStatus.confirmado => 'Confirmada',
       JourneyStatus.cancelado => 'Cancelada',
+      // Estados de la API central.
+      ApiJourneyStatus.draft => 'Recién iniciado',
+      ApiJourneyStatus.inProgress => 'En progreso',
+      ApiJourneyStatus.pendingConfirmation => 'Pendiente de confirmación',
+      ApiJourneyStatus.completed => 'Completado',
+      ApiJourneyStatus.cancelled => 'Cancelado',
       _ => JourneyStatus.label(status),
     };
 

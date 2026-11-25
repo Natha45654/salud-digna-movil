@@ -2,25 +2,37 @@ import 'package:flutter/material.dart';
 
 import 'core/config.dart';
 import 'core/theme.dart';
+import 'real/central_api.dart';
+import 'real/real_state.dart';
+import 'real/ui/real_app.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
 
-/// App móvil de Salud Digna (simulador del canal MOBILE_APP).
+/// App móvil de Salud Digna, canal móvil del sistema omnicanal.
 ///
-/// Esta app no reemplaza la app real: es el módulo de canal descrito en la
-/// Opción A del documento de arquitectura. Notifica eventos de negocio al
-/// orquestador (a través del backend del canal) y consulta trámites,
-/// contexto e historial.
+/// `MOCK_MODE` (al compilar) elige el flujo:
+/// - true: orquestador simulado en el dispositivo ([SaludDignaApp]).
+/// - false: API central de Salud Digna ([SaludDignaRealApp]), solo con el
+///   JWT del paciente.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final config = await AppConfig.load();
+  if (!config.mockMode) {
+    final error = config.baseUrlError;
+    if (error != null) {
+      runApp(ConfigErrorApp(message: error));
+      return;
+    }
+    runApp(SaludDignaRealApp(state: RealState(CentralApi(config.baseUrl)), config: config));
+    return;
+  }
   final state = AppState(config);
   await state.init();
   runApp(SaludDignaApp(state: state));
 }
 
-/// Acceso al estado global sin dependencias externas.
+/// Acceso al estado del modo simulado sin dependencias externas.
 class AppScope extends InheritedNotifier<AppState> {
   const AppScope({super.key, required AppState state, required super.child})
       : super(notifier: state);

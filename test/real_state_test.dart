@@ -8,189 +8,7 @@ import 'package:salud_digna_movil/real/api_models.dart';
 import 'package:salud_digna_movil/real/central_api.dart';
 import 'package:salud_digna_movil/real/real_state.dart';
 
-const _journey = '00000000-0000-4000-8000-000000000001';
-const _study = '00000000-0000-4000-8000-000000000201';
-const _clinic = '00000000-0000-4000-8000-000000000101';
-
-/// API central falsa que sigue docs/api-mobile-journeys.md: rutas, cuerpos,
-/// versión del contexto, idempotencia y errores. [failures] inyecta respuestas
-/// para las siguientes solicitudes que coincidan con una ruta.
-class FakeCentralApi {
-  final requests = <http.Request>[];
-  final failures = <String, List<http.Response>>{};
-  final accounts = <String, Map<String, dynamic>>{
-    'ana@example.test': {'role': 'PATIENT', 'patientId': 'p-ana', 'token': 'jwt-ana'},
-    'luis@example.test': {'role': 'PATIENT', 'patientId': 'p-luis', 'token': 'jwt-luis'},
-    'asesor@example.test': {'role': 'ADVISOR', 'patientId': null, 'token': 'jwt-asesor'},
-    'sinperfil@example.test': {'role': 'PATIENT', 'patientId': null, 'token': 'jwt-sinperfil'},
-  };
-  int expiresIn = 1800;
-
-  /// Siguientes POST de eventos que fallan sin respuesta (red caída).
-  int networkFailures = 0;
-
-  String step = 'SELECT_CLINIC';
-  String status = 'IN_PROGRESS';
-  int version = 2;
-  final refs = <String, String>{'studyId': _study};
-  final idempotency = <String, String>{};
-  final events = <String, String>{};
-  bool linked = true;
-
-  http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code,
-      headers: {'content-type': 'application/json; charset=utf-8'});
-
-  Map<String, dynamic> get context => {
-        'journeyId': _journey,
-        'currentStep': step,
-        'version': version,
-        'externalRefs': refs,
-        'updatedAt': '2026-11-25T16:00:00.000Z',
-      };
-
-  Future<http.Response> handle(http.Request req) async {
-    requests.add(req);
-    final path = req.url.path.replaceFirst('/api/v1', '');
-    final key = '${req.method} $path';
-    for (final entry in failures.entries) {
-      if (key.startsWith(entry.key) && entry.value.isNotEmpty) return entry.value.removeAt(0);
-    }
-
-    if (key == 'POST /auth/login') {
-      final body = jsonDecode(req.body) as Map;
-      final acct = accounts[body['email']];
-      if (acct == null || body['password'] != 'correcta') {
-        return _json({'statusCode': 401, 'message': 'Unauthorized'}, 401);
-      }
-      return _json({
-        'accessToken': acct['token'],
-        'tokenType': 'Bearer',
-        'expiresIn': expiresIn,
-        'user': {'id': 'u-${acct['patientId']}', 'email': body['email'], 'role': acct['role']},
-      });
-    }
-
-    final auth = req.headers['Authorization'];
-    final acct = accounts.entries
-        .where((e) => 'Bearer ${e.value['token']}' == auth)
-        .map((e) => MapEntry(e.key, e.value))
-        .firstOrNull;
-    if (path.startsWith('/studies') || path.startsWith('/clinics')) {
-      return _catalog(path, req.url.queryParameters);
-    }
-    if (acct == null) return _json({'statusCode': 401, 'message': 'Unauthorized'}, 401);
-
-    if (key == 'GET /auth/me') {
-      final pid = acct.value['patientId'];
-      return _json({
-        'id': 'u-$pid',
-        'email': acct.key,
-        'role': acct.value['role'],
-        'isActive': true,
-        'patientId': pid,
-        'patient': pid == null
-            ? null
-            : {'id': pid, 'firstName': 'Ana', 'lastName': 'Ejemplo', 'email': acct.key, 'phone': null},
-      });
-    }
-    // Solo Ana tiene el trámite vinculado.
-    final ownsJourney = acct.value['patientId'] == 'p-ana';
-
-    if (key == 'GET /mobile/journeys') {
-      if (!linked || !ownsJourney) return _json({'statusCode': 404, 'message': 'Not Found'}, 404);
-      return _json({
-        'items': [_summary],
-      });
-    }
-    if (key == 'POST /mobile/journeys') {
-      final k = req.headers['Idempotency-Key'];
-      if (k == null) return _json({'message': 'Idempotency-Key requerido'}, 400);
-      final id = idempotency.putIfAbsent(k, () => '00000000-0000-4000-8000-00000000090${idempotency.length}');
-      return _json({'id': id, 'status': 'DRAFT'}, 201);
-    }
-    if (!ownsJourney) return _json({'statusCode': 404, 'message': 'Not Found'}, 404);
-    if (key == 'GET /mobile/journeys/$_journey') return _json(_summary);
-    if (key == 'GET /mobile/journeys/$_journey/context') return _json(context);
-    if (key == 'GET /mobile/journeys/$_journey/history') {
-      final cursor = req.url.queryParameters['cursor'];
-      final first = {
-        'id': 'e1', 'type': 'JOURNEY_CREATED', 'producerCode': 'demo-web',
-        'occurredAt': '2026-11-25T15:00:00.000Z', 'receivedAt': '2026-11-25T15:00:00.100Z',
-        'schemaVersion': 1, 'data': {'version': 1},
-      };
-      final second = {
-        'id': 'e2', 'type': 'JOURNEY_CONTEXT_UPDATED', 'producerCode': 'demo-web',
-        'occurredAt': '2026-11-25T15:01:00.000Z', 'receivedAt': '2026-11-25T15:01:00.100Z',
-        'schemaVersion': 1, 'data': {'version': 2, 'currentStep': 'SELECT_CLINIC'},
-      };
-      return cursor == null
-          ? _json({'items': [first], 'nextCursor': 'c2'})
-          : _json({'items': [second]});
-    }
-    if (key == 'POST /mobile/journeys/$_journey/events') {
-      if (networkFailures > 0) {
-        networkFailures--;
-        throw http.ClientException('Connection reset');
-      }
-      final body = jsonDecode(req.body) as Map<String, dynamic>;
-      final id = body['externalEventId'] as String;
-      final previous = events[id];
-      if (previous != null) {
-        return previous == req.body
-            ? _json({'id': 'evt-$id', 'journeyId': _journey}, 201)
-            : _json({'message': 'ID de evento reutilizado'}, 409);
-      }
-      final payload = body['payload'] as Map<String, dynamic>;
-      if (payload['expectedVersion'] != version) {
-        return _json({'message': 'Versión obsoleta'}, 409);
-      }
-      events[id] = req.body;
-      version++;
-      if (payload['studyId'] != null) {
-        refs
-          ..clear()
-          ..['studyId'] = payload['studyId'] as String;
-        step = 'SELECT_CLINIC';
-      }
-      if (payload['clinicId'] != null) {
-        refs['clinicId'] = payload['clinicId'] as String;
-        step = 'REVIEW';
-      }
-      if (payload['to'] != null) status = payload['to'] as String;
-      return _json({'id': 'evt-$id', 'journeyId': _journey}, 201);
-    }
-    return _json({'statusCode': 404, 'message': 'Cannot ${req.method} $path'}, 404);
-  }
-
-  Map<String, dynamic> get _summary => {
-        'id': _journey,
-        'type': 'APPOINTMENT',
-        'status': status,
-        'createdAt': '2026-11-25T15:00:00.000Z',
-        'updatedAt': '2026-11-25T16:00:00.000Z',
-      };
-
-  http.Response _catalog(String path, Map<String, String> q) {
-    if (path == '/studies') {
-      return _json({
-        'page': int.parse(q['page'] ?? '1'), 'limit': 100, 'hasMore': false,
-        'items': [
-          {'id': _study, 'name': 'Demo Glucosa', 'description': null, 'price': '120.00', 'isActive': true},
-        ],
-      });
-    }
-    if (path == '/clinics') {
-      return _json({
-        'page': 1, 'limit': 100, 'hasMore': false,
-        'items': [
-          {'id': _clinic, 'name': 'Demo Clínica Alameda', 'address': 'Avenida Ejemplo 101',
-           'city': 'Ciudad Ejemplo', 'state': 'Estado Ejemplo', 'isActive': true},
-        ],
-      });
-    }
-    return _json({'statusCode': 404, 'message': 'Not Found'}, 404);
-  }
-}
+import 'support/fake_central_api.dart';
 
 void main() {
   late FakeCentralApi server;
@@ -215,7 +33,7 @@ void main() {
 
   Future<JourneyContext> loginAndContext([String email = 'ana@example.test']) async {
     await state.login(email, 'correcta');
-    return (await state.loadJourney(_journey)).context;
+    return (await state.loadJourney(fakeJourneyId)).context;
   }
 
   group('Sesión', () {
@@ -240,7 +58,7 @@ void main() {
     test('ninguna solicitud lleva cabeceras de canal, grants ni acreditaciones', () async {
       final ctx = await loginAndContext();
       await state.refreshJourneys();
-      await state.selectClinic(ctx, _clinic);
+      await state.selectClinic(ctx, fakeClinicId);
       for (final r in server.requests) {
         final names = r.headers.keys.map((k) => k.toLowerCase());
         expect(names, isNot(contains('x-channel-key')));
@@ -273,11 +91,11 @@ void main() {
     test('recupera los trámites, sus contextos y los catálogos con precio como cadena', () async {
       await state.login('ana@example.test', 'correcta');
       await state.refreshJourneys();
-      expect(state.journeys.single.id, _journey);
-      expect(state.contexts[_journey]!.studyId, _study);
-      expect(state.studies[_study]!.price, '120.00');
-      expect(formatPriceString(state.studies[_study]!.price), r'$120.00 MXN');
-      expect(state.clinics[_clinic]!.name, 'Demo Clínica Alameda');
+      expect(state.journeys.single.id, fakeJourneyId);
+      expect(state.contexts[fakeJourneyId]!.studyId, fakeStudyId);
+      expect(state.studies[fakeStudyId]!.price, '120.00');
+      expect(formatPriceString(state.studies[fakeStudyId]!.price), r'$120.00 MXN');
+      expect(state.clinics[fakeClinicId]!.name, 'Demo Clínica Alameda');
     });
 
     test('404 al listar significa identidad sin trámites vinculados, no un error', () async {
@@ -291,7 +109,7 @@ void main() {
 
     test('el historial se pagina con nextCursor', () async {
       await state.login('ana@example.test', 'correcta');
-      var detail = await state.loadJourney(_journey);
+      var detail = await state.loadJourney(fakeJourneyId);
       expect(detail.history.map((e) => e.id), ['e1']);
       expect(detail.hasMoreHistory, isTrue);
       detail = await state.loadMoreHistory(detail);
@@ -312,7 +130,7 @@ void main() {
   group('Escrituras', () {
     test('el evento de clínica sigue el contrato y después se lee el contexto vigente', () async {
       final ctx = await loginAndContext();
-      final r = await state.selectClinic(ctx, _clinic);
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.done);
 
       final post = server.requests.firstWhere((q) => q.method == 'POST' && q.url.path.endsWith('/events'));
@@ -322,17 +140,17 @@ void main() {
       expect(body['type'], 'JOURNEY_CONTEXT_UPDATED');
       expect(body['schemaVersion'], 1);
       expect(body['occurredAt'], '2026-11-25T16:00:00.000Z');
-      expect(body['payload'], {'expectedVersion': 2, 'clinicId': _clinic});
+      expect(body['payload'], {'expectedVersion': 2, 'clinicId': fakeClinicId});
 
       expect(server.requests.last.url.path, endsWith('/context'));
       expect(r.context!.currentStep, 'REVIEW');
       expect(r.context!.version, 3);
-      expect(state.pendingFor(_journey), isNull);
+      expect(state.pendingFor(fakeJourneyId), isNull);
     });
 
     test('enviar a confirmación publica JOURNEY_STATUS_CHANGED con to', () async {
       server
-        ..refs['clinicId'] = _clinic
+        ..refs['clinicId'] = fakeClinicId
         ..step = 'REVIEW';
       final ctx = await loginAndContext();
       final r = await state.requestConfirmation(ctx);
@@ -347,8 +165,8 @@ void main() {
 
     test('ante 503 y 504 reintenta con el mismo cuerpo y luego entrega una sola vez', () async {
       final ctx = await loginAndContext();
-      server.failures['POST /mobile/journeys/$_journey/events'] = [error(503), error(504)];
-      final r = await state.selectClinic(ctx, _clinic);
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [error(503), error(504)];
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.done);
       final bodies = server.requests
           .where((q) => q.url.path.endsWith('/events'))
@@ -362,7 +180,7 @@ void main() {
     test('un fallo de red se reintenta con el mismo cuerpo', () async {
       final ctx = await loginAndContext();
       server.networkFailures = 1;
-      final r = await state.selectClinic(ctx, _clinic);
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.done);
       expect(waits, [const Duration(seconds: 1)]);
       expect(server.events, hasLength(1));
@@ -370,46 +188,46 @@ void main() {
 
     test('si los reintentos se agotan, queda pendiente y el reintento manual envía lo mismo', () async {
       final ctx = await loginAndContext();
-      server.failures['POST /mobile/journeys/$_journey/events'] = [error(503), error(503), error(503)];
-      final r = await state.selectClinic(ctx, _clinic);
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [error(503), error(503), error(503)];
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.pending);
-      final op = state.pendingFor(_journey)!;
+      final op = state.pendingFor(fakeJourneyId)!;
       expect(op.attempts, 3);
 
-      final again = await state.selectStudy(ctx, _study);
+      final again = await state.selectStudy(ctx, fakeStudyId);
       expect(again.status, WriteStatus.rejected, reason: 'una sola operación pendiente por trámite');
 
       final retried = await state.retryPending(op);
       expect(retried.status, WriteStatus.done);
       expect(server.requests.where((q) => q.url.path.endsWith('/events')).map((q) => q.body).toSet(),
           hasLength(1));
-      expect(state.pendingFor(_journey), isNull);
+      expect(state.pendingFor(fakeJourneyId), isNull);
     });
 
     test('409 descarta la operación y vuelve a leer el contexto', () async {
       final ctx = await loginAndContext();
       server.version = 3; // otro canal avanzó
-      final r = await state.selectClinic(ctx, _clinic);
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.conflict);
       expect(r.context!.version, 3);
-      expect(state.pendingFor(_journey), isNull);
+      expect(state.pendingFor(fakeJourneyId), isNull);
     });
 
     test('429 con Retry-After corto espera y reintenta; largo deja la operación en espera', () async {
       final ctx = await loginAndContext();
-      server.failures['POST /mobile/journeys/$_journey/events'] = [
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [
         error(429, headers: {'retry-after': '3'}),
       ];
-      expect((await state.selectClinic(ctx, _clinic)).status, WriteStatus.done);
+      expect((await state.selectClinic(ctx, fakeClinicId)).status, WriteStatus.done);
       expect(waits, [const Duration(seconds: 3)]);
 
-      final ctx2 = state.contexts[_journey]!;
-      server.failures['POST /mobile/journeys/$_journey/events'] = [
+      final ctx2 = state.contexts[fakeJourneyId]!;
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [
         error(429, headers: {'retry-after': '60'}),
       ];
       final r = await state.requestConfirmation(ctx2);
       expect(r.status, WriteStatus.pending);
-      final op = state.pendingFor(_journey)!;
+      final op = state.pendingFor(fakeJourneyId)!;
       final calls = server.requests.length;
       final early = await state.retryPending(op);
       expect(early.status, WriteStatus.pending);
@@ -421,10 +239,10 @@ void main() {
     test('400, 403 y 404 se descartan sin reintentar', () async {
       final ctx = await loginAndContext();
       for (final code in [400, 403, 404]) {
-        server.failures['POST /mobile/journeys/$_journey/events'] = [error(code)];
-        final r = await state.selectClinic(ctx, _clinic);
+        server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [error(code)];
+        final r = await state.selectClinic(ctx, fakeClinicId);
         expect(r.status, WriteStatus.rejected, reason: '$code');
-        expect(state.pendingFor(_journey), isNull);
+        expect(state.pendingFor(fakeJourneyId), isNull);
       }
       expect(waits, isEmpty);
     });
@@ -455,8 +273,8 @@ void main() {
   group('Aislamiento por cuenta', () {
     test('401 al publicar conserva la operación solo para la misma cuenta', () async {
       final ctx = await loginAndContext();
-      server.failures['POST /mobile/journeys/$_journey/events'] = [error(401)];
-      final r = await state.selectClinic(ctx, _clinic);
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [error(401)];
+      final r = await state.selectClinic(ctx, fakeClinicId);
       expect(r.status, WriteStatus.sessionExpired);
       expect(state.isLoggedIn, isFalse);
 
@@ -465,16 +283,16 @@ void main() {
       state.logout();
 
       await state.login('ana@example.test', 'correcta');
-      final op = state.pendingFor(_journey);
+      final op = state.pendingFor(fakeJourneyId);
       expect(op, isNotNull);
       expect((await state.retryPending(op!)).status, WriteStatus.done);
     });
 
     test('cerrar sesión elimina las operaciones pendientes y los datos cargados', () async {
       final ctx = await loginAndContext();
-      server.failures['POST /mobile/journeys/$_journey/events'] = [error(503), error(503), error(503)];
-      await state.selectClinic(ctx, _clinic);
-      expect(state.pendingFor(_journey), isNotNull);
+      server.failures['POST /mobile/journeys/$fakeJourneyId/events'] = [error(503), error(503), error(503)];
+      await state.selectClinic(ctx, fakeClinicId);
+      expect(state.pendingFor(fakeJourneyId), isNotNull);
       state.logout();
       expect(state.session, isNull);
       expect(state.contexts, isEmpty);

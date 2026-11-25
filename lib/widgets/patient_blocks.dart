@@ -12,15 +12,30 @@ import 'common.dart';
 /// Tarjeta de identidad del paciente. `compact` reduce relleno y avatar para
 /// el panel lateral.
 class IdentityCard extends StatelessWidget {
-  final PatientSession session;
+  final String displayName;
+
+  /// Segunda línea: identificadores del paciente o su correo.
+  final String detail;
   final bool compact;
-  const IdentityCard({super.key, required this.session, this.compact = false});
+
+  /// Tarjeta del paciente del modo simulado.
+  IdentityCard({super.key, required PatientSession session, this.compact = false})
+      : displayName = session.displayName,
+        detail = session.identifiers.map((e) => e.value).join(' · ');
+
+  /// Tarjeta con datos ya preparados (modo real).
+  const IdentityCard.fromParts({
+    super.key,
+    required this.displayName,
+    required this.detail,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final initials = session.displayName
+    final initials = displayName
         .split(' ')
         .where((p) => p.isNotEmpty)
         .take(2)
@@ -76,13 +91,13 @@ class IdentityCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(session.displayName,
+                    Text(displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: t.titleMedium?.copyWith(color: s.onPrimaryContainer)),
                     const SizedBox(height: 2),
                     Text(
-                      session.identifiers.map((e) => e.value).join(' · '),
+                      detail,
                       maxLines: compact ? 2 : null,
                       overflow: compact ? TextOverflow.ellipsis : null,
                       style: t.bodySmall?.copyWith(color: s.onPrimaryContainer),

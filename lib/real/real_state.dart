@@ -116,6 +116,10 @@ class RealState extends ChangeNotifier {
   /// Intentos automáticos de una misma escritura ante red, 5xx o 429 corto.
   final int maxAttempts;
 
+  /// Registro de depuración. Por omisión escribe solo en compilaciones de
+  /// depuración. Nunca recibe el JWT, la contraseña ni datos del paciente.
+  final void Function(String message) log;
+
   /// Un `Retry-After` de hasta este valor se espera automáticamente; uno mayor
   /// deja la operación pendiente para que el paciente la reintente.
   final Duration autoRetryAfterLimit;
@@ -135,8 +139,14 @@ class RealState extends ChangeNotifier {
     DateTime Function()? clock,
     this.maxAttempts = 3,
     this.autoRetryAfterLimit = const Duration(seconds: 10),
+    void Function(String message)? log,
   })  : delay = delay ?? Future<void>.delayed,
-        clock = clock ?? DateTime.now;
+        clock = clock ?? DateTime.now,
+        log = log ?? _debugLog;
+
+  static void _debugLog(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
 
   // ---------------------------------------------------------------- sesión
 
@@ -270,15 +280,27 @@ class RealState extends ChangeNotifier {
     try {
       journeys = await _authed(api.listJourneys);
       notLinked = false;
+      log('[modo real] GET /mobile/journeys → 200 con ${journeys.length} trámite(s).');
     } on ApiException catch (e) {
       if (e.isNotFound) {
         journeys = [];
         notLinked = true;
+        // La pantalla dice lo mismo que con un 200 vacío, pero no es lo mismo:
+        // un 404 indica que la identidad institucional no tiene vínculo. Si el
+        // paciente debería tener trámites, hay que revisarlo en el servidor.
+        log('[modo real] GET /mobile/journeys → 404 «${e.message}»: identidad sin '
+            'vínculo o trámites inaccesibles. Se muestra "sin trámites vinculados". '
+            'Si este paciente debería tener trámites, revisar su vínculo institucional '
+            'en el servidor.');
       } else if (!e.isUnauthorized) {
         journeysError = humanApiError(e);
+        log('[modo real] GET /mobile/journeys → ${e.statusCode} «${e.message}».');
+      } else {
+        log('[modo real] GET /mobile/journeys → 401: sesión suspendida.');
       }
     } on ApiNetworkException catch (e) {
       journeysError = e.message;
+      log('[modo real] GET /mobile/journeys → sin respuesta: ${e.message}');
     } finally {
       loadingJourneys = false;
       notifyListeners();
