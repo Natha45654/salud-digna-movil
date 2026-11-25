@@ -42,6 +42,8 @@ void main() {
   Future<void> tapButton(WidgetTester tester, String label) async {
     await dismissSnack(tester);
     await tester.ensureVisible(find.text(label));
+    // El desplazamiento se aplica en el siguiente fotograma.
+    await tester.pump();
     await tester.tap(find.text(label));
   }
 

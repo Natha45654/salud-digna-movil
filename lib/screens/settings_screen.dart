@@ -20,25 +20,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _url = TextEditingController();
-  bool _initialized = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (!_initialized) {
-      _initialized = true;
-      final cfg = AppScope.of(context).config;
-      _url.text = cfg.baseUrl;
-    }
-  }
-
-  @override
-  void dispose() {
-    _url.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
@@ -55,53 +36,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
         padding: const EdgeInsets.fromLTRB(Space.md, 0, Space.md, Space.xl),
         children: [
-          const SectionTitle('Orquestador', subtitle: 'De dónde toma la app tus trámites'),
+          const SectionTitle('Conexión', subtitle: 'De dónde toma la app tus trámites'),
           Card(
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                SwitchListTile(
-                  secondary: const Icon(Icons.memory_outlined),
-                  title: const Text('Orquestador simulado'),
-                  subtitle: const Text(
-                      'Corre dentro de la app con los mismos contratos. '
-                      'Desactívalo para usar el backend del canal móvil, que '
-                      'habla con el orquestador real.'),
-                  value: cfg.mockMode,
-                  onChanged: (v) => cfg.update(mockMode: v),
+                ListTile(
+                  leading: Icon(cfg.mockMode ? Icons.memory_outlined : Icons.cloud_outlined),
+                  title: Text(cfg.mockMode ? 'Orquestador simulado' : 'API central de Salud Digna'),
+                  subtitle: Text(cfg.mockMode
+                      ? 'Corre dentro de la app, sin red, con pacientes y trámites de prueba.'
+                      : cfg.baseUrl),
                 ),
-                if (!cfg.mockMode) ...[
+                if (!cfg.mockMode && cfg.baseUrlError != null) ...[
                   const Divider(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.md, Space.md),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TextField(
-                          controller: _url,
-                          keyboardType: TextInputType.url,
-                          decoration: const InputDecoration(
-                            labelText: 'URL del backend del canal móvil',
-                            prefixIcon: Icon(Icons.dns_outlined),
-                            helperText:
-                                'Por omisión, CHANNEL_BACKEND_URL del archivo .env. '
-                                'Consulta el README para emulador o teléfono.',
-                            helperMaxLines: 2,
-                          ),
-                        ),
-                        const SizedBox(height: Space.md),
-                        FilledButton.tonalIcon(
-                          icon: const Icon(Icons.save_outlined),
-                          onPressed: () async {
-                            await cfg.update(baseUrl: _url.text);
-                            if (context.mounted) showSnack(context, 'Conexión guardada');
-                          },
-                          label: const Text('Guardar'),
-                        ),
-                      ],
-                    ),
+                  ListTile(
+                    leading: Icon(Icons.error_outline, color: s.error),
+                    title: Text(cfg.baseUrlError!, style: TextStyle(color: s.error)),
                   ),
                 ],
+                const Divider(),
+                ListTile(
+                  leading: Icon(Icons.info_outline, color: s.onSurfaceVariant),
+                  subtitle: const Text(
+                      'El modo y la URL se fijan al compilar (MOCK_MODE y '
+                      'CHANNEL_BACKEND_URL en .env) y no se cambian desde la app. '
+                      'Para cambiar de entorno, instala el APK compilado para ese entorno.'),
+                ),
               ],
             ),
           ),
@@ -120,6 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
+          if (cfg.mockMode) ...[
           const SectionTitle('Pruebas de resiliencia',
               subtitle: 'Para demostrar que nada se pierde si el orquestador falla'),
           Card(
@@ -213,6 +175,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
+          ],
+
           if (cfg.mockMode) ...[
             const SectionTitle('Escenario de demostración'),
             Card(
@@ -243,12 +207,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(Space.xs, 0, Space.xs, Space.sm),
                   child: Text(
-                    'Canal: ${Channels.mobileApp}\n'
-                    'Contrato app ↔ backend del canal: POST /identity/verify, '
-                    'POST /integrations/events, GET /me/journeys, '
-                    'GET /journeys/{id}, GET /journeys/{id}/events, POST /journeys/link.\n'
-                    'El backend del canal traduce a JOURNEY_CONTEXT_UPDATED y '
-                    'JOURNEY_STATUS_CHANGED con externalEventId, schemaVersion 1 y expectedVersion.',
+                    cfg.mockMode
+                        ? 'Canal: ${Channels.mobileApp}. Modo simulado: el orquestador corre '
+                            'en el dispositivo y no se conecta a ningún servidor.'
+                        : 'Canal: demo-mobile. API central: ${cfg.baseUrl}/api/v1 '
+                            '(POST /auth/login, GET /auth/me, /mobile/journeys, /studies, '
+                            '/clinics). La app solo envía el JWT del paciente.',
                     style: t.bodySmall?.copyWith(color: s.onSurfaceVariant),
                   ),
                 ),

@@ -41,7 +41,7 @@ class OutboxEntry {
 /// (4xx: conflicto de versión, transición inválida, no autorizado) no se
 /// reintentan: se descartan y se informan al usuario.
 class Outbox extends ChangeNotifier {
-  static const _kKey = 'outbox.v1';
+  static const _kKey = 'mock.outbox.v1';
   final List<OutboxEntry> _entries = [];
   bool _flushing = false;
 

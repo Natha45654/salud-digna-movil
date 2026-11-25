@@ -12,7 +12,7 @@ import '../services/outbox.dart';
 
 /// Estado global de la app móvil (canal MOBILE_APP).
 class AppState extends ChangeNotifier {
-  static const _kSession = 'session.v1';
+  static const _kSession = 'mock.session.v1';
   static const _uuid = Uuid();
 
   final AppConfig config;

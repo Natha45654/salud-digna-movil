@@ -273,7 +273,7 @@ void main() {
       'verificationLevel': 'VERIFIED',
       'identifiers': [ana.first.toJson()],
     });
-    final state = await newState(tester, prefs: {'session.v1': expired});
+    final state = await newState(tester, prefs: {'mock.session.v1': expired});
     expect(state.isLoggedIn, isTrue);
     await tester.pumpWidget(SaludDignaApp(state: state));
     await settle(tester);
