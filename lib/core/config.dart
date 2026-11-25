@@ -5,20 +5,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// - [baseUrl]: URL del backend del canal móvil (mobile_channel_backend,
 ///   puerto 3300). Ese backend es quien guarda la API key del orquestador.
-/// - [channelKey]: clave de demo con la que la app se identifica ante su
-///   backend de canal (X-Channel-Key). No es la API key del orquestador.
 /// - [mockMode]: si es true, la app usa un orquestador simulado en memoria
 ///   que implementa los mismos contratos. Permite demostrar la app aunque el
 ///   backend aún no exponga los endpoints.
 class AppConfig extends ChangeNotifier {
   static const _kBaseUrl = 'cfg.baseUrl';
-  static const _kChannelKey = 'cfg.channelKey';
   static const _kMockMode = 'cfg.mockMode';
   static const _kMockFail = 'cfg.mockFail';
   static const _kWhatsappSimulator = 'cfg.whatsappSimulator';
 
   String baseUrl;
-  String channelKey;
   bool mockMode;
 
   /// Solo en modo simulado: hace fallar las llamadas para probar el outbox.
@@ -30,7 +26,6 @@ class AppConfig extends ChangeNotifier {
 
   AppConfig._({
     required this.baseUrl,
-    required this.channelKey,
     required this.mockMode,
     required this.mockFailures,
     required this.whatsappSimulator,
@@ -42,7 +37,6 @@ class AppConfig extends ChangeNotifier {
   /// Una variable vacía equivale a no definida. Sin URL ni clave, la app solo
   /// funciona en modo simulado hasta configurarlas en la pantalla Conexión.
   static const _envBaseUrl = String.fromEnvironment('CHANNEL_BACKEND_URL');
-  static const _envChannelKey = String.fromEnvironment('CHANNEL_KEY');
   static const _envMockMode = bool.fromEnvironment('MOCK_MODE', defaultValue: true);
   static const _envWhatsappSimulator = bool.fromEnvironment('WHATSAPP_SIMULATOR');
 
@@ -50,7 +44,6 @@ class AppConfig extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     return AppConfig._(
       baseUrl: prefs.getString(_kBaseUrl) ?? _envBaseUrl,
-      channelKey: prefs.getString(_kChannelKey) ?? _envChannelKey,
       mockMode: prefs.getBool(_kMockMode) ?? _envMockMode,
       mockFailures: prefs.getBool(_kMockFail) ?? false,
       whatsappSimulator: prefs.getBool(_kWhatsappSimulator) ?? _envWhatsappSimulator,
@@ -59,7 +52,6 @@ class AppConfig extends ChangeNotifier {
 
   Future<void> update({
     String? baseUrl,
-    String? channelKey,
     bool? mockMode,
     bool? mockFailures,
     bool? whatsappSimulator,
@@ -68,10 +60,6 @@ class AppConfig extends ChangeNotifier {
     if (baseUrl != null) {
       this.baseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
       await prefs.setString(_kBaseUrl, this.baseUrl);
-    }
-    if (channelKey != null) {
-      this.channelKey = channelKey.trim();
-      await prefs.setString(_kChannelKey, this.channelKey);
     }
     if (mockMode != null) {
       this.mockMode = mockMode;

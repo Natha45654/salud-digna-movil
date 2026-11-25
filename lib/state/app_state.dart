@@ -6,7 +6,6 @@ import 'package:uuid/uuid.dart';
 
 import '../core/config.dart';
 import '../models/models.dart';
-import '../services/http_orchestrator.dart';
 import '../services/mock_orchestrator.dart';
 import '../services/orchestrator_client.dart';
 import '../services/outbox.dart';
@@ -19,7 +18,6 @@ class AppState extends ChangeNotifier {
   final AppConfig config;
   final Outbox outbox = Outbox();
   late MockOrchestrator _mock;
-  late HttpOrchestrator _http;
 
   PatientSession? session;
 
@@ -44,11 +42,11 @@ class AppState extends ChangeNotifier {
 
   AppState(this.config) {
     _mock = MockOrchestrator(config);
-    _http = HttpOrchestrator(config);
     config.addListener(notifyListeners);
   }
 
-  OrchestratorClient get client => config.mockMode ? _mock : _http;
+  /// Este estado solo atiende el modo simulado; el modo real vive en `lib/real/`.
+  OrchestratorClient get client => _mock;
   MockOrchestrator get mock => _mock;
   bool get isLoggedIn => session != null;
 
@@ -183,12 +181,6 @@ class AppState extends ChangeNotifier {
   /// Horarios libres para el trámite en la clínica (revalidados por el servidor).
   Future<List<DateTime>> availableSlots(String journeyId, String clinicId) => _authed(
       (s) => client.availableSlots(journeyId: journeyId, clinicId: clinicId, session: s));
-
-  /// Traspaso manual de permisos desde otro canal (limitación conocida).
-  Future<void> linkJourney(String code) async {
-    await client.linkJourney(code: code.trim(), session: session!);
-    await refreshJourneys();
-  }
 
   Future<void> resetDemo() async {
     await _mock.reset();

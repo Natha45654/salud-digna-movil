@@ -10,7 +10,7 @@ import 'orchestrator_client.dart';
 
 /// Orquestador simulado que corre dentro de la app.
 ///
-/// Implementa los mismos contratos que [HttpOrchestrator] y aplica las reglas
+/// Implementa [OrchestratorClient] y aplica las reglas
 /// no negociables de la sección 12 del documento de arquitectura:
 ///
 /// - Identidad verificada: solo entrega trámites tras OTP válido y solo los del
@@ -474,32 +474,6 @@ class MockOrchestrator implements OrchestratorClient {
       String journeyId, PatientSession session) async {
     final j = await getJourney(journeyId, session);
     return List.unmodifiable(_journeys[j.journeyId]!.events);
-  }
-
-  /// En el simulador el código de acceso de demo es el propio id del trámite
-  /// (o su forma codificada "id:grant" en base64url, como en el backend real).
-  @override
-  Future<void> linkJourney(
-      {required String code, required PatientSession session}) async {
-    await _ensureLoaded();
-    await _maybeFail();
-    final ref = _requirePatient(session);
-    var journeyId = code.trim();
-    try {
-      final decoded = utf8.decode(base64Url.decode(base64Url.normalize(journeyId)));
-      if (decoded.contains(':')) journeyId = decoded.split(':').first;
-    } catch (_) {
-      // no estaba codificado: se usa tal cual
-    }
-    final rec = _journeys[journeyId];
-    if (rec == null) {
-      throw const OrchestratorException(
-          404, 'CODE_INVALID', 'El código de acceso no es válido');
-    }
-    if (rec.patientRef != ref) {
-      throw const OrchestratorException(
-          403, 'FORBIDDEN', 'El trámite pertenece a otro paciente');
-    }
   }
 }
 

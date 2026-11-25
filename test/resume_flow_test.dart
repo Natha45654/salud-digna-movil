@@ -2,14 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:salud_digna_movil/core/config.dart';
 import 'package:salud_digna_movil/main.dart';
 import 'package:salud_digna_movil/models/models.dart';
-import 'package:salud_digna_movil/services/http_orchestrator.dart';
 import 'package:salud_digna_movil/state/app_state.dart';
 import 'package:salud_digna_movil/widgets/common.dart';
 import 'package:salud_digna_movil/widgets/patient_blocks.dart';
@@ -282,29 +279,5 @@ void main() {
     await settle(tester);
     expect(state.isLoggedIn, isFalse);
     expect(find.text('Identifícate'), findsOneWidget);
-  });
-
-  test('El cliente pide los trámites sin ningún identificador de paciente', () async {
-    SharedPreferences.setMockInitialValues({});
-    final config = await AppConfig.load();
-    await config.update(baseUrl: 'http://backend.test', mockMode: false);
-    final seen = <Uri>[];
-    final client = HttpOrchestrator(config, client: MockClient((req) async {
-      seen.add(req.url);
-      return http.Response(jsonEncode({'journeys': []}), 200,
-          headers: {'content-type': 'application/json'});
-    }));
-    const session = PatientSession(
-      patientRef: 'PAT-0001',
-      displayName: 'Ana García',
-      token: 'tok',
-      verificationLevel: 'VERIFIED',
-      identifiers: ana,
-    );
-    await client.listJourneys(session, status: 'open');
-    expect(seen.single.path, '/api/v1/me/journeys');
-    expect(seen.single.queryParameters, {'status': 'open'});
-    expect(seen.single.toString().contains('PAT-0001'), isFalse);
-    expect(seen.single.toString().contains('SD-123456'), isFalse);
   });
 }

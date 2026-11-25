@@ -12,12 +12,10 @@ import '../models/models.dart';
 /// | GET    | /api/v1/me/journeys?status=            | [listJourneys]         |
 /// | GET    | /api/v1/journeys/{id}                  | [getJourney]           |
 /// | GET    | /api/v1/journeys/{id}/events           | [listEvents]           |
-/// | POST   | /api/v1/journeys/link                  | [linkJourney]          |
 /// | GET    | /api/v1/journeys/{id}/availability     | [availableSlots]       |
 ///
-/// En producción la app NO habla directo con el orquestador: habla con el
-/// backend del canal móvil (mobile_channel_backend), que guarda la API key
-/// del orquestador y traduce al contrato real (decisión 4 del contexto).
+/// Solo lo implementa el orquestador simulado ([MockOrchestrator]). Estas
+/// rutas no existen en la API central; el modo real usa `lib/real/`.
 abstract class OrchestratorClient {
   /// Valida identidad del paciente con identificadores tipados + OTP.
   /// Devuelve una sesión con token de paciente y nivel de verificación.
@@ -42,12 +40,6 @@ abstract class OrchestratorClient {
   /// Cronología inmutable del trámite.
   Future<List<CanonicalEvent>> listEvents(
       String journeyId, PatientSession session);
-
-  /// Traspaso manual de permisos: vincula un trámite iniciado en otro canal
-  /// con el código de acceso que ese canal entregó al paciente. El paciente
-  /// nunca ve el identificador del trámite; el código lo encapsula.
-  Future<void> linkJourney(
-      {required String code, required PatientSession session});
 
   /// Horarios disponibles para el trámite en una clínica (clínica + fecha +
   /// hora). Solo devuelve los libres; los ocupados no se incluyen.

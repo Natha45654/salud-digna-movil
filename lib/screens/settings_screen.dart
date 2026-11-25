@@ -21,7 +21,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _url = TextEditingController();
-  final _key = TextEditingController();
   bool _initialized = false;
 
   @override
@@ -31,14 +30,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _initialized = true;
       final cfg = AppScope.of(context).config;
       _url.text = cfg.baseUrl;
-      _key.text = cfg.channelKey;
     }
   }
 
   @override
   void dispose() {
     _url.dispose();
-    _key.dispose();
     super.dispose();
   }
 
@@ -92,23 +89,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             helperMaxLines: 2,
                           ),
                         ),
-                        const SizedBox(height: Space.sm + 4),
-                        TextField(
-                          controller: _key,
-                          decoration: const InputDecoration(
-                            labelText: 'Clave de canal (X-Channel-Key)',
-                            prefixIcon: Icon(Icons.key_outlined),
-                            helperText:
-                                'Clave de demo hacia el backend del canal. La API key '
-                                'del orquestador vive en ese backend, nunca aquí.',
-                            helperMaxLines: 2,
-                          ),
-                        ),
                         const SizedBox(height: Space.md),
                         FilledButton.tonalIcon(
                           icon: const Icon(Icons.save_outlined),
                           onPressed: () async {
-                            await cfg.update(baseUrl: _url.text, channelKey: _key.text);
+                            await cfg.update(baseUrl: _url.text);
                             if (context.mounted) showSnack(context, 'Conexión guardada');
                           },
                           label: const Text('Guardar'),
