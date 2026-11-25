@@ -16,45 +16,57 @@ La app tiene dos implementaciones del mismo cliente (`OrchestratorClient`):
 
 | Modo | Qué hace | Estado |
 |------|----------|--------|
-| **Simulado** (`MOCK_MODE=true`, por omisión) | Un orquestador en memoria dentro de la app, con pacientes y un trámite sembrados. No necesita red. | Verificado en dispositivo y con 185 pruebas automáticas. |
-| **HTTP** (`MOCK_MODE=false`) | Llama a un backend intermedio del canal móvil con el contrato descrito en [`CONTRATO_API.md`](CONTRATO_API.md). | Ese backend no está publicado en ningún repositorio. Pendiente de verificar desde este repositorio. |
+| **Simulado** (`MOCK_MODE=true`, por omisión) | Un orquestador en memoria dentro de la app, con pacientes y un trámite sembrados. No necesita red. | Cubierto por 185 pruebas automáticas que pasan (`flutter test`). En dispositivo: pendiente de verificar. |
+| **HTTP** (`MOCK_MODE=false`) | Llama a un backend intermedio del canal móvil con el contrato descrito en [`CONTRATO_API.md`](CONTRATO_API.md). | Ese backend no está publicado en ningún repositorio. Pendiente de verificar. |
 
 **La app todavía no consume la API de producción.** La API desplegada usa otras
 rutas y otra autenticación (ver sección 5). Las rutas que llama el cliente HTTP
 de la app (`/api/v1/identity/verify`, `/api/v1/integrations/events`,
 `/api/v1/me/journeys`, `/api/v1/journeys/{id}`) responden `404` en producción.
 
+Por lo mismo, la demo de continuidad de la sección 8 ocurre completa dentro del
+orquestador simulado: los pasos de los otros canales vienen sembrados, no se
+ejecutan en el sitio web, WhatsApp ni el Call Center reales.
+
 ### Qué guarda la app en el dispositivo
 
 En `SharedPreferences`: la sesión del paciente (incluido su token), la URL y la
 clave de canal configuradas, el modo, los eventos pendientes de envío (outbox) y,
 en modo simulado, los datos del orquestador simulado. La app **no** contiene ni
-guarda la API key del orquestador, credenciales Ed25519 ni access-grants. El
-"código de acceso" para vincular un trámite de otro canal se envía una sola vez
-y no se almacena.
+guarda la API key del orquestador, credenciales Ed25519 ni access-grants.
 
 ## 2. Requisitos previos
 
-Versiones verificadas al compilar y ejecutar este repositorio:
+Versiones verificadas al compilar este repositorio desde un clon limpio:
 
 | Herramienta | Versión verificada | Origen del requisito |
 |-------------|--------------------|----------------------|
 | Flutter | 3.47.5, canal stable | Versión con la que se compiló y probó |
 | Dart | 3.13.4 (incluido en Flutter 3.47.5) | `pubspec.yaml` exige `>=3.13.4 <4.0.0` |
-| Android SDK | API 36 (compileSdk y targetSdk) | Valores de Flutter 3.47.5 usados por `android/app/build.gradle.kts` |
+| Android SDK | Plataforma `android-36` (compileSdk y targetSdk 36) | Valores de Flutter 3.47.5 usados por `android/app/build.gradle.kts` |
 | Android mínimo del dispositivo | 7.0 (API 24) | `minSdk = flutter.minSdkVersion` (24 en Flutter 3.47.5) |
-| JDK | 17 o superior; se compiló con el JDK 21 de Android Studio | El proyecto compila con objetivo Java 17 |
+| JDK | 17 o superior; se compiló con OpenJDK 21 (el que incluye Android Studio) | El proyecto compila con objetivo Java 17 |
 | Gradle / Android Gradle Plugin / Kotlin | 9.3.1 / 9.1.0 / 2.4.0 | `gradle-wrapper.properties` y `settings.gradle.kts`; Gradle se descarga solo |
 | Git | cualquiera reciente | Para clonar |
-
-Dispositivo de prueba usado: teléfono Android 13 (API 33) por USB.
 
 Dependencias de la app (`pubspec.yaml`, versiones de `pubspec.lock`): `http`
 1.6.0, `shared_preferences` 2.5.6, `uuid` 4.6.0 y `cupertino_icons` 1.0.9.
 Desarrollo: `flutter_test`, `integration_test` y `flutter_lints` 6.0.0.
 
-Comprueba tu entorno con `flutter doctor -v`. Si Flutter no usa un JDK 17 o
-superior, indícale cuál con `flutter config --jdk-dir <ruta del JDK>`.
+### Preparar Flutter y el Android SDK
+
+1. Comprueba que el `flutter` de tu terminal es el del SDK que vas a usar. Si
+   `flutter --version` no imprime nada y se queda esperando, tu `PATH` apunta a
+   otra copia del SDK (ver sección 9). Mientras lo corriges, ejecuta Flutter
+   con la ruta completa: `<ruta del SDK>/bin/flutter`.
+2. Ejecuta `flutter doctor -v` y revisa la sección *Android toolchain*: debe
+   indicar la ruta del Android SDK y la plataforma `android-36`. Si Flutter no
+   encuentra el SDK, indícaselo con `flutter config --android-sdk <ruta>`.
+3. Si `flutter doctor` avisa de licencias de Android sin aceptar, ejecuta
+   `flutter doctor --android-licenses`. Este paso no se probó en una máquina
+   nueva: pendiente de verificar.
+4. Si Flutter no usa un JDK 17 o superior, indícaselo con
+   `flutter config --jdk-dir <ruta del JDK>`.
 
 ## 3. Instalación
 
@@ -71,12 +83,20 @@ En Windows, `flutter pub get` puede terminar con el aviso *"Building with
 plugins requires symlink support"* y código de salida 1 aunque las dependencias
 sí se resolvieron (ver sección 9).
 
+Para comprobar la instalación:
+
+```bash
+flutter analyze     # resultado esperado: No issues found!
+flutter test        # resultado esperado: 185 pruebas, All tests passed!
+```
+
 ## 4. Configuración
 
 La configuración se lee **al compilar** desde `.env` con
 `--dart-define-from-file=.env`. El archivo `.env` no se versiona;
 `.env.example` contiene las mismas variables vacías. Una variable vacía equivale
-a no definida.
+a no definida. Con `.env` sin completar la app compila y arranca en modo
+simulado.
 
 | Variable | Para qué sirve | Si está vacía | Ejemplo ficticio |
 |----------|----------------|---------------|------------------|
@@ -98,7 +118,7 @@ hay que borrar los datos de la app.
 
 | Entorno | Cómo se activa | Estado |
 |---------|----------------|--------|
-| Simulado en el dispositivo | `MOCK_MODE=true` o vacío, o el interruptor *Orquestador simulado* en Conexión y demo | Funciona. Es el entorno de la demo. |
+| Simulado en el dispositivo | `MOCK_MODE=true` o vacío, o el interruptor *Orquestador simulado* en Conexión y demo | Es el entorno de la demo. Cubierto por pruebas automáticas; en dispositivo, pendiente de verificar. |
 | Backend del canal móvil | `MOCK_MODE=false`, `CHANNEL_BACKEND_URL` y `CHANNEL_KEY`; recompilar | Pendiente de verificar: el backend no está publicado. |
 | API de producción | No disponible | La app no es compatible todavía con esta API. |
 
@@ -118,7 +138,8 @@ del equipo (acceso restringido). La app no llama a estas rutas todavía.
 - Autenticación: `POST /auth/login` con `email` y `password`. Responde
   `accessToken` (JWT), `tokenType: "Bearer"`, `expiresIn` (segundos) y `user`.
   Las demás rutas usan `Authorization: Bearer <accessToken>`. No hay cabecera
-  `X-Channel-Key`.
+  `X-Channel-Key`. El cliente solo maneja el JWT del paciente: la API central
+  conserva las credenciales del canal y obtiene los permisos de cada trámite.
 
 | Método | Ruta | Uso |
 |--------|------|-----|
@@ -129,32 +150,38 @@ del equipo (acceso restringido). La app no llama a estas rutas todavía.
 | `GET` | `/mobile/journeys/{journeyId}/history` | Historial: `items` y `nextCursor`; parámetros `limit` y `cursor` |
 | `POST` | `/mobile/journeys/{journeyId}/events` | Registrar un avance: `externalEventId`, `type` (`JOURNEY_CONTEXT_UPDATED` o `JOURNEY_STATUS_CHANGED`), `schemaVersion: 1`, `occurredAt`, `payload` |
 
-`GET /api/v1/health` responde `{"status":"ok"}` sin autenticación.
+`GET /api/v1/health` responde `{"status":"ok"}` sin autenticación. Sin token,
+las rutas `/mobile/journeys` responden `401`.
 
 ## 6. Compilar y ejecutar el APK de depuración
 
+Compilar (verificado desde un clon limpio):
+
 ```bash
 flutter build apk --debug --dart-define-from-file=.env
-adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-El APK queda en `build/app/outputs/flutter-apk/app-debug.apk`. Con más de un
-dispositivo conectado, indica cuál con `adb -s <serie> install -r ...`
-(`adb devices` lista las series). Después abre la app *Salud Digna* desde el
-lanzador del teléfono.
+El APK queda en `build/app/outputs/flutter-apk/app-debug.apk`.
+
+Instalar en un teléfono (pendiente de verificar en este repositorio):
+
+1. En el teléfono, activa las *Opciones de desarrollador* y la *Depuración
+   USB*, y conéctalo por USB.
+2. Comprueba que aparece con `adb devices` (o `flutter devices`). Usa el `adb`
+   del Android SDK que configuraste en Flutter (ver sección 9).
+3. Instala y abre:
+
+   ```bash
+   adb install -r build/app/outputs/flutter-apk/app-debug.apk
+   ```
+
+   Con más de un dispositivo conectado, indica cuál con
+   `adb -s <serie> install -r ...`. Después abre la app *Salud Digna* desde el
+   lanzador del teléfono.
 
 `flutter run --dart-define-from-file=.env` compila e instala en un paso; está
-pendiente de verificar en este repositorio.
-
-Pruebas:
-
-```bash
-flutter analyze
-flutter test        # 185 pruebas, sin dispositivo
-```
-
-`integration_test/app_test.dart` contiene el recorrido completo en dispositivo;
-está pendiente de verificar.
+pendiente de verificar. `integration_test/app_test.dart` contiene el recorrido
+completo para ejecutarse en un dispositivo; también está pendiente de verificar.
 
 ## 7. Credenciales de prueba
 
@@ -172,7 +199,11 @@ La API key del orquestador nunca va en la app.
 
 Entorno: simulado. Los pasos de los canales sitio web y WhatsApp vienen
 sembrados en el orquestador simulado; no se ejecutan en esos canales. Todo lo
-que sigue se hace en la app y fue verificado en un teléfono Android 13.
+que sigue se hace en la app.
+
+Estado de verificación: los pasos están cubiertos por las pruebas de widgets
+`test/ui_flow_test.dart` y `test/resume_flow_test.dart`, que pasan. La
+ejecución en un teléfono está pendiente de verificar.
 
 Preparación: abre **Conexión y demo** (engranaje), comprueba que
 *Orquestador simulado* esté activado y pulsa *Restablecer escenario de Ana*.
@@ -183,8 +214,8 @@ Si hay una sesión abierta, ciérrala con *Cerrar sesión*.
 | 0 | Sitio web, luego WhatsApp (sembrado) | Nada: el escenario ya contiene que Ana eligió estudio y clínica en el sitio web y el horario en WhatsApp. | — |
 | 1 | App | En *Datos de prueba para la demo* toca a Ana García, pulsa *Enviar código de verificación*, cambia el código por uno incorrecto y pulsa *Continuar*. | El aviso *Código de verificación incorrecto*. |
 | 2 | App | Escribe el código correcto de Ana y pulsa *Continuar*. | *Hola, Ana* y su ficha marcada como *Verificada*. |
-| 3 | App | Pulsa *Retomar trámite de otro canal*. | El trámite *Ultrasonido abdominal*, clínica, estado *Lista para confirmar*, paso 4 de 4 y *Lo dejaste en WhatsApp*. |
-| 4 | App | Toca el trámite y despliega *Historial de atención*. | Estudio, clínica y horario ya elegidos. En el historial, eventos de *Sitio Web*, *WhatsApp* y *App móvil*, incluidos *Trámite retomado* y *Cambio de canal (De WhatsApp a App móvil)*. |
+| 3 | App | Pulsa *Retomar trámite de otro canal*. | El trámite *Ultrasonido abdominal*, clínica, estado *Lista para confirmar* y *Lo dejaste en WhatsApp*. |
+| 4 | App | Toca el trámite y despliega *Historial de atención*. | Estudio, clínica y horario ya elegidos, con la barra de progreso en el último paso (*Confirmar*). En el historial, eventos de *Sitio Web*, *WhatsApp* y *App móvil*, incluidos *Trámite retomado* y *Cambio de canal (De WhatsApp a App móvil)*. |
 | 5 | App | Pulsa *Confirma tu cita* y luego *Confirmar* en el diálogo. | En el historial: *Confirmación solicitada* (App móvil) y *Cita confirmada* con un folio (Sistema de citas). |
 | 6 | App | Restablece el escenario, abre de nuevo el trámite de Ana, activa *Simular caída del orquestador* en Conexión y demo, vuelve y cambia el **estudio**. En Conexión y demo, desactiva la caída y pulsa *Reenviar*. | Primero *1 evento(s) sin entregar* con el error simulado; después *Todo entregado*. Al actualizar el trámite, un solo evento *Estudio seleccionado*. |
 | 7 | App | Cierra sesión y entra como Luis Hernández. Pulsa *Retomar trámite de otro canal*. | *No tienes trámites pendientes*: Luis no ve el trámite de Ana. *Nueva cita* abre *Agenda un estudio*. |
@@ -195,29 +226,30 @@ Al retomar un trámite, la app registra los eventos `REQUEST_RESUMED` y
 
 ## 9. Resolución de problemas
 
-**`flutter` no responde.** En una máquina de prueba, `flutter` del PATH apuntaba
-a una segunda copia del SDK y se quedaba bloqueado sin salida. `flutter doctor`
-lo advierte con *"`flutter` on your path resolves to ..., which is not inside
-your current Flutter SDK checkout"*. Ejecuta Flutter desde la carpeta `bin` del
-SDK que usas o corrige el PATH.
+**`flutter` no responde.** Al probar desde un clon limpio, el `flutter` del
+`PATH` apuntaba a una segunda copia del SDK y se quedaba bloqueado sin imprimir
+nada. Ejecutar `flutter doctor` con esa misma copia también se bloquea. Ejecuta
+el del SDK que usas, con ruta completa (`<ruta del SDK>/bin/flutter doctor`):
+avisa con *"`flutter` on your path resolves to ..., which is not inside your
+current Flutter SDK checkout"*. Corrige el `PATH` poniendo primero
+`<ruta del SDK>/bin`.
 
 **`flutter pub get` termina con error de symlinks.** En Windows aparece
 *"Building with plugins requires symlink support. Please enable Developer Mode"*
 y el código de salida es 1, pero las dependencias se resuelven (existe
-`.dart_tool/package_config.json`) y el APK de Android compila. Para quitar el
-aviso, activa el Modo de desarrollador de Windows.
+`.dart_tool/package_config.json`), `flutter analyze` y `flutter test` funcionan
+y el APK de Android compila. Para quitar el aviso, activa el Modo de
+desarrollador de Windows.
 
 **`flutter doctor` avisa de varios `adb`.** Si hay más de un Android SDK
-instalado, usa el `adb` del SDK que configuraste en Flutter y, con varios
-dispositivos, añade `-s <serie>`.
+instalado, el `adb` del `PATH` puede no ser el del SDK que usa Flutter.
+`flutter doctor -v` muestra la ruta del SDK configurado; usa el `adb` de su
+carpeta `platform-tools` y, con varios dispositivos, añade `-s <serie>`.
 
 **La app no arranca en el estado esperado tras reinstalar.** `adb install -r`
 conserva los datos: la sesión, el modo y la URL guardados en Conexión y demo
 siguen vigentes. Cierra sesión y usa *Restablecer escenario de Ana*, o borra
 los datos de la app.
-
-**No aparece el botón *Continuar* en la identificación.** El teclado lo tapa;
-ciérralo o desplázate hacia abajo.
 
 **Con la caída simulada no cargan los horarios.** Es lo esperado: también
 fallan las lecturas. Para la prueba de resiliencia cambia el estudio o la
