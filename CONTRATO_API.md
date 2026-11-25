@@ -1,230 +1,223 @@
-# Contrato entre la app móvil y el backend del canal
+# Contrato entre la app móvil y la API central
 
-> Actualizado el 24 nov 2026 según `CONTEXTO ACTUALIZADO.txt`.
->
-> La app **no habla directo con el orquestador**. Por la decisión 4 (la API key
-> del orquestador nunca va en una app móvil), la app consume este contrato
-> expuesto por `mobile_channel_backend/`, y ese backend traduce al contrato real
-> del orquestador (`POST /journeys`, `POST /events` con `JOURNEY_CONTEXT_UPDATED`
-> y `JOURNEY_STATUS_CHANGED`, `GET /journeys/:id`, `/context`, `/history`,
-> cabeceras de API key y `X-Journey-Grant`).
->
-> ```
-> App Flutter ──este contrato──▶ mobile_channel_backend ──contrato real──▶ Orquestador
-> ```
->
-> El orquestador simulado dentro de la app (`lib/services/mock_orchestrator.dart`)
-> implementa este mismo contrato para demostrar sin red.
+Fuente: `docs/openapi.json` de la rama `main` de `jangeltr/salud-digna`
+(repositorio del equipo, acceso restringido), contrastado con
+`docs/api-auth.md`, `docs/api-mobile-journeys.md`, `docs/api-studies.md` y
+`docs/api-clinics.md` del mismo repositorio. Si este documento y el OpenAPI no
+coinciden, manda el OpenAPI.
 
-## Cabeceras en toda solicitud
+**Estado: nada de lo descrito aquí se ha probado contra la API de
+producción.** El cliente (`lib/real/`) se probó contra una API falsa construida
+a partir de esa documentación (`test/support/fake_central_api.dart`).
 
-| Cabecera          | Valor                        | Propósito                                  |
-|-------------------|------------------------------|--------------------------------------------|
-| `X-Channel-Id`    | `MOBILE_APP`                 | Identifica la aplicación (ChannelIntegration) |
-| `X-Channel-Key`   | clave configurada en la app  | Autenticación de la aplicación             |
-| `X-Request-Id`    | UUID por solicitud           | Identificador de solicitud para auditoría  |
-| `Idempotency-Key` | igual al `eventId`           | Solo en `POST /integrations/events`        |
-| `Authorization`   | `Bearer <token de paciente>` | Tras verificar identidad                   |
-
-## 1. `POST /api/v1/identity/verify`
-
-Verifica la identidad del paciente con identificadores tipados y un OTP.
-No está en la tabla de la sección 5 del documento, pero la sección 6 exige que
-"recibir un teléfono o CURP no prueba por sí solo la identidad".
-
-Solicitud:
-
-```json
-{
-  "channel": "MOBILE_APP",
-  "patientIdentifiers": [{ "type": "PATIENT_ID", "value": "SD-123456" }],
-  "otp": "123456"
-}
+```
+App Flutter ──JWT del paciente──▶ API central ──API key del canal + permisos──▶ Orquestador
 ```
 
-Respuesta `200`:
+La app solo maneja el JWT del paciente. La API central firma la afirmación
+institucional con el canal `demo-mobile`, obtiene el permiso de cada trámite y
+usa su propia API key. La app **no** envía `X-Channel-Key`, `X-Journey-Grant`
+ni encabezados de afirmación, y no guarda ninguna credencial de integración.
 
-```json
-{
-  "patientRef": "PAT-0001",
-  "displayName": "Ana García",
-  "token": "<jwt o token opaco>",
-  "verificationLevel": "VERIFIED",
-  "identifiers": [
-    { "type": "PATIENT_ID", "value": "SD-123456" },
-    { "type": "PHONE", "value": "+525512345678" }
-  ]
-}
-```
+El modo simulado (`MOCK_MODE=true`) no usa este contrato: corre un orquestador
+en el dispositivo (`lib/services/mock_orchestrator.dart`).
 
-Errores: `404 PATIENT_NOT_FOUND` (sin coincidencia única), `401 INVALID_OTP`.
+## Conexión
 
-## 2. `POST /api/v1/integrations/events`
+- URL base: `https://api.salud-digna.app/api/v1`. En la app se configura el
+  origen sin `/api/v1` (`CHANNEL_BACKEND_URL`) y el cliente añade el prefijo.
+- Solo HTTPS. El manifiesto de Android prohíbe el tráfico en claro.
+- Cuerpos JSON con `Content-Type: application/json`. Las operaciones con
+  seguridad `bearer` llevan `Authorization: Bearer <accessToken>`.
 
-Registra un evento canónico (sección 8). La app agrega `expectedVersion` para
-el control optimista de concurrencia (sección 12).
+## Operaciones que usa la app
 
-```json
-{
-  "eventId": "app-5f1c…",
-  "sourceSystem": "MOBILE_APP",
-  "patientIdentifiers": [{ "type": "PATIENT_ID", "value": "SD-123456" }],
-  "journeyId": "ATN-2026-001",
-  "eventType": "CLINIC_SELECTED",
-  "occurredAt": "2026-11-23T18:00:00.000",
-  "data": { "clinicId": "CLI-012", "clinicName": "Salud Digna Guadalajara Centro", "city": "Guadalajara" },
-  "expectedVersion": 5
-}
-```
+| Método | Ruta (relativa a `/api/v1`) | Autenticación | Uso en la app |
+|--------|-----------------------------|---------------|---------------|
+| `POST` | `/auth/login` | Pública | Inicio de sesión |
+| `GET` | `/auth/me` | Bearer | Rol, cuenta activa y `patientId` |
+| `GET` | `/mobile/journeys` | Bearer | Trámites activos del paciente |
+| `POST` | `/mobile/journeys` | Bearer + `Idempotency-Key` | Nueva cita |
+| `GET` | `/mobile/journeys/{journeyId}` | Bearer | Estado del trámite |
+| `GET` | `/mobile/journeys/{journeyId}/context` | Bearer | Paso, versión y referencias |
+| `GET` | `/mobile/journeys/{journeyId}/history` | Bearer | Historial entre canales |
+| `POST` | `/mobile/journeys/{journeyId}/events` | Bearer | Elegir estudio o clínica, enviar a confirmación, cancelar |
+| `GET` | `/studies` | Pública | Catálogo de estudios |
+| `GET` | `/studies/{id}` | Pública | Estudio fuera del catálogo cargado |
+| `GET` | `/clinics` | Pública | Catálogo de clínicas |
+| `GET` | `/clinics/{id}` | Pública | Clínica fuera del catálogo cargado |
 
-Respuesta `200` / `201`:
+## Autenticación
 
-```json
-{ "accepted": true, "duplicate": false, "journeyId": "ATN-2026-001", "version": 6, "status": "PENDIENTE_CONFIRMACION" }
-```
+### `POST /auth/login`
 
-Reglas que la app asume:
+Cuerpo (`LoginDto`): `email` (correo, hasta 254) y `password` (hasta 128).
 
-- **Idempotencia**: un `eventId` repetido responde `200` con `duplicate: true`
-  y la versión vigente, sin crear un segundo evento.
-- **Concurrencia**: si `expectedVersion` no coincide, responder
-  `409 VERSION_CONFLICT`. La app recarga el contexto y muestra el mensaje.
-- **Transiciones**: `422 INVALID_TRANSITION` con mensaje legible cuando el
-  evento no aplica (p. ej. confirmar sin horario, modificar un trámite cerrado).
-- **Autorización**: `403 FORBIDDEN` si el paciente del token no es el dueño
-  del trámite; `401` si el token no es válido.
-- `JOURNEY_STARTED` sin `journeyId` crea el trámite; el orquestador asigna el
-  id y lo devuelve en `journeyId`.
-- Al recibir `CONFIRMATION_REQUESTED`, el sistema autorizado de citas emite
-  `APPOINTMENT_CONFIRMED` (en el simulador lo hace el propio orquestador con
-  `sourceSystem: APPOINTMENT_SYSTEM`). La app nunca emite
-  `APPOINTMENT_CONFIRMED` por sí misma: la confirmación real pertenece al
-  sistema oficial (sección 7, último párrafo).
+Respuesta `200` (`LoginResponseDto`):
 
-Códigos de red (`5xx`, timeout, sin conexión) hacen que el evento quede en el
-outbox local y se reintente. Los `4xx` se descartan y se informan.
+| Campo | Tipo |
+|-------|------|
+| `accessToken` | string (JWT) |
+| `tokenType` | `"Bearer"` |
+| `expiresIn` | número, en segundos |
+| `user` | `PublicUserDto`: `id` (UUID de la cuenta), `email`, `role` (`PATIENT`, `ADVISOR` o `ADMIN`) |
 
-## 3. `GET /api/v1/me/journeys?status=open|closed|all`
+Errores documentados: `400`, `401` (credenciales incorrectas, cuenta ausente o
+inactiva, con el mismo mensaje) y `429` con `Retry-After` en segundos.
 
-Devuelve los trámites del paciente de la **sesión verificada**. El cliente no
-envía ningún identificador de paciente: el servidor lo resuelve a partir del
-token de sesión y filtra por él (si el cliente pudiera pedir por id, cualquiera
-leería los de otra persona). Sin sesión válida: `401` y la app regresa a la
-identificación. `status=open` devuelve los pendientes de todos los canales;
-`closed`, los confirmados o cancelados. Acepta arreglo plano o
-`{ "journeys": [...] }`.
+### `GET /auth/me`
 
-Reemplaza a `GET /api/v1/patients/{patientRef}/journeys`, que se eliminó.
+Respuesta `200` (`AccountDto`): `id`, `email`, `role`, `isActive`, `patientId`
+(UUID o `null`) y `patient` (`PatientProfileDto` o `null`: `id`, `firstName`,
+`lastName`, `email` o `null`, `phone` o `null`). Error documentado: `401`.
 
-### Reanudación
+Reglas que aplica la app:
 
-Al continuar un trámite pendiente la app envía, con la versión del contexto:
+- Solo acepta `tokenType: "Bearer"`, rol `PATIENT`, `isActive: true` y
+  `patientId` distinto de `null`. El identificador del paciente es `patientId`,
+  no el `id` de la cuenta.
+- El JWT vive solo en memoria y se da por vencido 30 s antes de `expiresIn`.
+  No hay *refresh token* (`docs/api-auth.md`): al vencer, se vuelve a iniciar
+  sesión.
 
-- `REQUEST_RESUMED` con `{ "fromChannel": "WHATSAPP", "toChannel": "MOBILE_APP" }`.
-- `CHANNEL_SWITCHED` con los mismos datos, si el canal de origen es otro.
+## Trámites (`/mobile/journeys`)
 
-Como el orquestador solo admite `JOURNEY_CONTEXT_UPDATED` y
-`JOURNEY_STATUS_CHANGED`, el backend del canal los registra como
-`JOURNEY_CONTEXT_UPDATED` con `{ "context": { "resume": { "type", "fromChannel",
-"toChannel" } } }` hasta que el orquestador acepte los tipos nuevos.
+Todas usan Bearer. Errores documentados en el OpenAPI para estas rutas: `400`,
+`401`, `403`, `404`, `429`, `502`, `503`, `504`, y además `409` en las dos
+operaciones `POST`.
 
-### Contacto con Salud Digna
+### `GET /mobile/journeys`
 
-En el detalle del trámite, "¿Necesitas ayuda?" abre WhatsApp (`https://wa.me/...`)
-o el marcador del teléfono (`tel:`, no llama solo). Antes de abrirlos, si el
-trámite está abierto, la app envía con la versión del contexto:
+`200` (`MobileJourneyListDto`): `items`, lista de `MobileJourneySummaryDto`.
+Hasta 100 trámites activos, del más reciente al más antiguo
+(`docs/api-mobile-journeys.md`).
 
-- `CONTACT_INITIATED` con `{ "channel": "WHATSAPP" | "CALL_CENTER", "step": "<nextStep.code>" }`.
+`404` cubre una identidad institucional todavía sin vínculo. La app lo muestra
+como «Aún no tienes trámites vinculados» y lo registra en el log de depuración
+de forma distinta a un `200` sin trámites.
 
-Así el asesor ve de dónde viene el paciente y en qué paso va. El backend del
-canal lo registra como `JOURNEY_CONTEXT_UPDATED` con
-`{ "context": { "contact": { "channel", "step" } } }`. En un trámite cerrado
-(el orquestador no admite cambios) solo se abre el canal, sin evento. Si el
-registro falla, el contacto se abre de todas formas. Los números de la demo son
-ficticios y se fijan al compilar con `--dart-define=SD_WHATSAPP` y `SD_CALL_CENTER`.
+### `MobileJourneySummaryDto`
 
-## 4. `GET /api/v1/journeys/{journeyId}`
+Respuesta de `GET /mobile/journeys/{journeyId}` y elemento de la lista.
 
-Proyección de contexto (Journey + JourneyContext):
+| Campo | Tipo |
+|-------|------|
+| `id` | UUID |
+| `type` | string, por ejemplo `APPOINTMENT` |
+| `status` | `DRAFT`, `IN_PROGRESS`, `PENDING_CONFIRMATION`, `COMPLETED` o `CANCELLED` |
+| `createdAt`, `updatedAt` | fecha y hora ISO 8601 |
 
-```json
-{
-  "journeyId": "ATN-2026-001",
-  "patientRef": "PAT-0001",
-  "type": "APPOINTMENT_BOOKING",
-  "status": "PENDIENTE_CONFIRMACION",
-  "version": 5,
-  "lastChannel": "WHATSAPP",
-  "updatedAt": "2026-11-23T15:03:00.000",
-  "channels": ["WEB", "WHATSAPP"],
-  "context": {
-    "study":  { "studyId": "STD-001", "studyName": "Ultrasonido abdominal", "price": 350 },
-    "clinic": { "clinicId": "CLI-012", "clinicName": "Salud Digna Guadalajara Centro" },
-    "slot":   { "slotStart": "2026-11-24T10:00:00.000" },
-    "appointment": { "appointmentId": "CITA-1A2B3C4D" }
-  },
-  "pendingFields": [],
-  "nextStep": { "code": "CONFIRM_APPOINTMENT", "label": "Confirma tu cita" }
-}
-```
+### `POST /mobile/journeys`
 
-Valores de `nextStep.code` que la app sabe ejecutar: `SELECT_STUDY`,
-`SELECT_CLINIC`, `SELECT_SLOT`, `CONFIRM_APPOINTMENT`, `VIEW_APPOINTMENT`.
+- Encabezado obligatorio `Idempotency-Key`: 32 bytes aleatorios en base64url
+  sin relleno (43 caracteres). Un reintento de la misma creación reusa la
+  clave; una creación nueva usa otra.
+- Cuerpo (`CreateMobileJourneyDto`): `{"type":"APPOINTMENT"}`.
+- `201` (`MobileJourneyCreatedDto`): `id` y `status`.
+- `409`: conflicto de idempotencia.
 
-## 5. `GET /api/v1/journeys/{journeyId}/events`
+### `GET /mobile/journeys/{journeyId}/context`
 
-Cronología inmutable, en orden ascendente. Acepta arreglo plano o
-`{ "events": [...] }`. Cada elemento tiene la forma del evento canónico.
-El backend del canal la construye a partir de `/history` del orquestador.
+`200` (`MobileJourneyContextDto`):
 
-## 6. `POST /api/v1/journeys/link`
+| Campo | Tipo |
+|-------|------|
+| `journeyId` | UUID |
+| `currentStep` | string; la app reconoce `SELECT_STUDY`, `SELECT_CLINIC`, `SELECT_DATETIME`, `REVIEW` y `CONFIRMED` |
+| `version` | entero ≥ 1 |
+| `externalRefs` | `MobileExternalRefsDto`: `studyId`, `clinicId` y `appointmentId`, todos UUID opcionales |
+| `updatedAt` | fecha y hora ISO 8601 |
 
-Traspaso manual de permisos entre canales (limitación conocida de la demo).
-El paciente escribe el **código de acceso** que le dio otro canal; nunca ve el
-identificador del trámite. El código es `base64url("journeyId:grant")` y lo
-genera el canal que entrega el permiso. El backend lo decodifica, valida el
-permiso contra el orquestador y vincula el trámite a la cuenta.
+La app muestra los nombres y precios buscando `studyId` y `clinicId` en los
+catálogos. No completa campos ausentes.
 
-```json
-{ "code": "NmYxYy11dWlkOmdyYW50LS4uLg" }
-```
+### `GET /mobile/journeys/{journeyId}/history`
 
-Respuesta `200`: `{ "linked": true }`. Errores: `400` si el código no se puede
-decodificar, `403` si el permiso no corresponde o el trámite es de otro
-paciente, `404` si no existe. En el simulador de la app, el código de demo
-puede ser el propio id del trámite.
+Parámetros: `limit` (1 a 100, por omisión 20) y `cursor` (el `nextCursor`
+anterior, hasta 200 caracteres `[A-Za-z0-9_-]`).
 
-## 7. `GET /api/v1/journeys/{journeyId}/availability?clinicId=CLI-012`
+`200` (`MobileJourneyHistoryDto`): `items` y `nextCursor`, que solo llega si hay
+otra página. Cada elemento (`MobileHistoryItemDto`):
 
-Horarios **libres** para el trámite en esa clínica. Los ocupados no se
-devuelven (ni siquiera deshabilitados). Un horario se identifica por
-clínica + fecha + hora.
+| Campo | Tipo |
+|-------|------|
+| `id` | UUID |
+| `type` | string, por ejemplo `JOURNEY_CREATED`, `JOURNEY_CONTEXT_UPDATED` o `JOURNEY_STATUS_CHANGED` |
+| `producerCode` | canal que registró el evento, por ejemplo `demo-web`, `demo-mobile` o `demo-callcenter` |
+| `occurredAt`, `receivedAt` | fecha y hora ISO 8601 |
+| `schemaVersion` | entero ≥ 1 |
+| `data` | `MobileHistoryDataDto`: `version`, `currentStep`, `from` y `to`, todos opcionales |
 
-```json
-{ "clinicId": "CLI-012", "slots": ["2026-11-25T08:00:00.000", "2026-11-25T10:00:00.000"] }
-```
+Orden ascendente por `occurredAt` (`docs/api-mobile-journeys.md`). La app
+muestra el `producerCode` tal como llega, junto a un nombre legible.
 
-> **Comportamiento de demo.** La autoridad real de la disponibilidad es el
-> sistema de citas de Salud Digna. El backend del canal (y el simulador de la
-> app) llevan un registro mínimo para demostrar la regla. No cambia el
-> contrato con el orquestador: sigue usando solo `JOURNEY_CONTEXT_UPDATED` y
-> `JOURNEY_STATUS_CHANGED`.
+### `POST /mobile/journeys/{journeyId}/events`
 
-Reglas, siempre del lado del servidor (compiten varios canales):
+Cuerpo (`PublishMobileEventDto`):
 
-- Una cita confirmada ocupa su horario. Al **cancelarla**, el horario vuelve a
-  quedar disponible para otros pacientes.
-- Al **elegir** horario (`SLOT_SELECTED`) y al **confirmar**
-  (`CONFIRMATION_REQUESTED`) se revalida. Si otro paciente ya lo tomó:
+| Campo | Valor |
+|-------|-------|
+| `externalEventId` | Opaco, hasta 128 caracteres, `^(?!system:)[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`. La app usa `app-<UUID v4>` |
+| `type` | `JOURNEY_CONTEXT_UPDATED` o `JOURNEY_STATUS_CHANGED` |
+| `schemaVersion` | `1` |
+| `occurredAt` | UTC con milisegundos, por ejemplo `2026-11-25T15:30:00.000Z` |
+| `payload` | `MobileEventPayloadDto`: `expectedVersion` (obligatorio, la `version` vigente del contexto) y además `studyId`, `clinicId` o `to` (`PENDING_CONFIRMATION` o `CANCELLED`) |
 
-  ```json
-  { "statusCode": 409, "code": "SLOT_UNAVAILABLE",
-    "message": "Ese horario ya no está disponible en esta clínica" }
-  ```
+Usos en la app:
 
-  No se aplica ningún cambio: el trámite queda como estaba, sin folio.
-- La misma revalidación aplica cuando la confirmación llega tarde desde el
-  outbox de la app tras una caída: no se confirma a ciegas.
-- En `GET /journeys/{id}`, si el horario elegido ya no está disponible, la
-  proyección trae `context.slotUnavailable: true`, estado `EN_CAPTURA` y
-  `nextStep.code = SELECT_SLOT`, para que la app pida elegir otro.
+| Acción | `type` | `payload` |
+|--------|--------|-----------|
+| Elegir estudio | `JOURNEY_CONTEXT_UPDATED` | `expectedVersion`, `studyId` |
+| Elegir clínica | `JOURNEY_CONTEXT_UPDATED` | `expectedVersion`, `clinicId` |
+| Enviar a confirmación | `JOURNEY_STATUS_CHANGED` | `expectedVersion`, `to: "PENDING_CONFIRMATION"` |
+| Cancelar | `JOURNEY_STATUS_CHANGED` | `expectedVersion`, `to: "CANCELLED"` |
+
+`201` (`MobileEventReceiptDto`): `id` (UUID del evento) y `journeyId`. Después de
+publicar, la app vuelve a leer el contexto.
+
+Reglas del orquestador (`apps/orchestrator/docs/journey-writes.md`): la
+clínica requiere un estudio previo, y cambiar de estudio borra la clínica.
+`PENDING_CONFIRMATION` requiere `IN_PROGRESS` con estudio y clínica.
+`CANCELLED` se admite desde un estado abierto. `409` indica versión obsoleta,
+transición inválida o un `externalEventId` reutilizado con otro contenido.
+
+## Catálogos
+
+`GET /studies` y `GET /clinics` aceptan `page` (1 a 10 000), `limit` (1 a 100)
+y `q`. La app pide `limit=100` y recorre las páginas mientras `hasMore` sea
+`true`.
+
+| Esquema | Campos |
+|---------|--------|
+| `StudyPageDto` / `ClinicPageDto` | `page`, `limit`, `hasMore`, `items` |
+| `StudyDto` | `id`, `name`, `description` (puede ser `null`), `price` (cadena `^[0-9]+\.[0-9]{2}$`), `isActive` |
+| `ClinicDto` | `id`, `name`, `address`, `city`, `state`, `isActive` |
+
+El precio se conserva como cadena y se muestra sin convertirlo a número
+(«$120.00 MXN»). `GET /studies/{id}` y `GET /clinics/{id}` responden `404` si el
+registro no existe o está inactivo; la app lo recuerda y muestra «no
+disponible en el catálogo».
+
+## Cómo responde la app a cada código
+
+| Código | Lectura | Escritura (evento o creación) |
+|--------|---------|-------------------------------|
+| `400` | Mensaje del servidor | Se descarta, sin reintento |
+| `401` | Regresa al acceso con «Tu sesión venció» | Igual; el cambio se conserva para la misma cuenta |
+| `403` | «Tu cuenta no tiene autorización…» | Se descarta |
+| `404` | Al listar: «Aún no tienes trámites vinculados». En otras lecturas: no disponible | Se descarta |
+| `409` | — | Se descarta, se relee el contexto y se avisa que cambió en otro canal |
+| `429` | Aviso con los segundos de `Retry-After` | Si `Retry-After` ≤ 10 s, espera y reintenta. Si es mayor, queda pendiente hasta esa hora |
+| `502`, `503`, `504` | Aviso con «Reintentar» | Hasta 3 intentos (esperas de 1 s y 2 s). Después queda pendiente |
+| Sin red o tiempo de espera | Aviso con «Reintentar» | Igual que `5xx` |
+
+Un reintento envía exactamente el mismo cuerpo (mismo `externalEventId`,
+`occurredAt` y `expectedVersion`) o la misma `Idempotency-Key`. Los cambios
+pendientes viven solo en memoria, separados por cuenta y URL. Se pierden al
+cerrar la app y se descartan al cerrar sesión.
+
+## Fuera del alcance de la API para el canal móvil
+
+No hay operaciones móviles para horarios disponibles, confirmación de cita ni
+registro de contactos. La app los muestra deshabilitados y explicados. El
+trámite llega hasta `PENDING_CONFIRMATION`.

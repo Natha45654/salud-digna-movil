@@ -6,34 +6,38 @@ App Flutter para Android del canal **MOBILE_APP** del reto *Software
 Inteligente* de Salud Digna (Hackatec). El sistema omnicanal permite que un
 paciente inicie un trámite en un canal (sitio web, WhatsApp, Call Center o app)
 y lo continúe en otro sin repetir información. Esta app es el canal móvil: el
-paciente se identifica, ve sus trámites pendientes con el contexto que dejó en
-otros canales, los retoma o inicia uno nuevo, y cada paso queda registrado como
-evento en el historial del trámite.
+paciente entra, ve los trámites que dejó en otros canales, los continúa o inicia
+uno nuevo, y cada paso queda en el historial del trámite.
 
-### Estado actual de la integración
+```
+App Flutter ──JWT del paciente──▶ API central ──▶ Orquestador omnicanal
+```
 
-La app tiene dos implementaciones del mismo cliente (`OrchestratorClient`):
+### Estado actual
+
+La app tiene dos modos, que se eligen **al compilar** con `MOCK_MODE`:
 
 | Modo | Qué hace | Estado |
 |------|----------|--------|
-| **Simulado** (`MOCK_MODE=true`, por omisión) | Un orquestador en memoria dentro de la app, con pacientes y un trámite sembrados. No necesita red. | Cubierto por 185 pruebas automáticas que pasan (`flutter test`). En dispositivo: pendiente de verificar. |
-| **HTTP** (`MOCK_MODE=false`) | Llama a un backend intermedio del canal móvil con el contrato descrito en [`CONTRATO_API.md`](CONTRATO_API.md). | Ese backend no está publicado en ningún repositorio. Pendiente de verificar. |
+| **Simulado** (`MOCK_MODE=true`, por omisión) | Un orquestador en memoria dentro de la app, con pacientes y un trámite sembrados. No usa red. | Cubierto por pruebas automáticas. En un teléfono: pendiente de verificar. |
+| **Real** (`MOCK_MODE=false`) | Consume la API central de Salud Digna (`https://api.salud-digna.app/api/v1`) con el contrato de [`CONTRATO_API.md`](CONTRATO_API.md). | **Sin probar contra la API de producción.** Solo se probó contra una API falsa construida desde la documentación del equipo (`test/support/fake_central_api.dart`). Falta una cuenta de paciente de prueba. |
 
-**La app todavía no consume la API de producción.** La API desplegada usa otras
-rutas y otra autenticación (ver sección 5). Las rutas que llama el cliente HTTP
-de la app (`/api/v1/identity/verify`, `/api/v1/integrations/events`,
-`/api/v1/me/journeys`, `/api/v1/journeys/{id}`) responden `404` en producción.
-
-Por lo mismo, la demo de continuidad de la sección 8 ocurre completa dentro del
-orquestador simulado: los pasos de los otros canales vienen sembrados, no se
-ejecutan en el sitio web, WhatsApp ni el Call Center reales.
+`flutter test` ejecuta 250 pruebas, todas pasan. Las del modo real cubren el
+acceso, el inicio, la pantalla del trámite y los errores conocidos (401 por
+sesión vencida, 404 sin trámites vinculados, 409, 429 con `Retry-After`, 502 y
+503).
 
 ### Qué guarda la app en el dispositivo
 
-En `SharedPreferences`: la sesión del paciente (incluido su token), la URL y la
-clave de canal configuradas, el modo, los eventos pendientes de envío (outbox) y,
-en modo simulado, los datos del orquestador simulado. La app **no** contiene ni
-guarda la API key del orquestador, credenciales Ed25519 ni access-grants.
+- **Modo simulado**, en `SharedPreferences` con claves `mock.*`: la sesión del
+  paciente de prueba, los eventos pendientes de envío (outbox), los datos del
+  orquestador simulado y el interruptor de caída simulada.
+- **Modo real:** nada. El JWT del paciente y los cambios pendientes viven solo
+  en memoria.
+- **En ambos**, la preferencia de usar el simulador de WhatsApp.
+
+La app **no** contiene ni guarda la API key del orquestador, credenciales
+Ed25519, access-grants ni encabezados de acreditación.
 
 ## 2. Requisitos previos
 
@@ -87,75 +91,82 @@ Para comprobar la instalación:
 
 ```bash
 flutter analyze     # resultado esperado: No issues found!
-flutter test        # resultado esperado: 185 pruebas, All tests passed!
+flutter test        # resultado esperado: 250 pruebas, All tests passed!
 ```
 
 ## 4. Configuración
 
 La configuración se lee **al compilar** desde `.env` con
-`--dart-define-from-file=.env`. El archivo `.env` no se versiona;
-`.env.example` contiene las mismas variables vacías. Una variable vacía equivale
-a no definida. Con `.env` sin completar la app compila y arranca en modo
-simulado.
+`--dart-define-from-file=.env`, o variable por variable con `--dart-define`. El
+archivo `.env` no se versiona; `.env.example` contiene las mismas variables
+vacías y su explicación. Una variable vacía equivale a no definida.
 
 | Variable | Para qué sirve | Si está vacía | Ejemplo ficticio |
 |----------|----------------|---------------|------------------|
-| `MOCK_MODE` | `true`: orquestador simulado. `false`: cliente HTTP. | `true` | `true` |
-| `CHANNEL_BACKEND_URL` | URL base del backend del canal móvil, sin `/` final. La app le añade `/api/v1/...`. | Se configura en la app | `https://backend-canal.example.com` |
-| `CHANNEL_KEY` | Valor de la cabecera `X-Channel-Key` hacia ese backend. | Se configura en la app | `clave-de-ejemplo` |
+| `MOCK_MODE` | `true`: orquestador simulado. `false`: API central real. | `true` | `false` |
+| `CHANNEL_BACKEND_URL` | Origen de la API central, solo `https://`, **sin `/api/v1`**: la app añade `/api/v1` por su cuenta y, si se escribe, lo quita para no duplicarlo. Solo se usa con `MOCK_MODE=false`. | `https://api.salud-digna.app` | `https://api.example.com` |
 | `WHATSAPP_SIMULATOR` | `true`: "¿Necesitas ayuda?" abre el simulador de WhatsApp del equipo (`saluddigna-wa://`). | `false` (abre `wa.me`) | `false` |
 | `SD_WHATSAPP` | Número de WhatsApp de contacto, solo dígitos con lada. | Abre WhatsApp sin número | `525500000000` |
 | `SD_CALL_CENTER` | Número del Call Center, solo dígitos. | Abre el marcador sin número | `5500000000` |
 
-Dentro de la app, el icono de engranaje (**Conexión y demo**) permite cambiar el
-modo, la URL y la clave. Lo guardado ahí tiene prioridad sobre `.env` y se
-conserva al reinstalar con `adb install -r`; para volver a los valores de `.env`
-hay que borrar los datos de la app.
+Ninguna variable lleva claves ni credenciales: la app solo usa el JWT que
+obtiene al iniciar sesión.
+
+El icono de engranaje (**Conexión**) muestra el modo y la URL, pero no los
+cambia. Si `CHANNEL_BACKEND_URL` no empieza con `https://`, el APK del modo real
+muestra una pantalla que lo explica en lugar de conectarse.
 
 ## 5. Cómo apuntar la app a la API y cambiar de entorno
 
-### Entornos
+| Entorno | Cómo se compila | Estado |
+|---------|-----------------|--------|
+| Simulado | `MOCK_MODE=true` o vacío | Cubierto por pruebas automáticas; en dispositivo, pendiente de verificar. |
+| API central de producción | `MOCK_MODE=false`; `CHANNEL_BACKEND_URL` vacío | Sin probar contra producción. |
+| Otra API central (demo o staging del equipo) | `MOCK_MODE=false` y `CHANNEL_BACKEND_URL=https://<origen>` | Sin probar. |
 
-| Entorno | Cómo se activa | Estado |
-|---------|----------------|--------|
-| Simulado en el dispositivo | `MOCK_MODE=true` o vacío, o el interruptor *Orquestador simulado* en Conexión y demo | Es el entorno de la demo. Cubierto por pruebas automáticas; en dispositivo, pendiente de verificar. |
-| Backend del canal móvil | `MOCK_MODE=false`, `CHANNEL_BACKEND_URL` y `CHANNEL_KEY`; recompilar | Pendiente de verificar: el backend no está publicado. |
-| API de producción | No disponible | La app no es compatible todavía con esta API. |
+Para cambiar de entorno se compila e instala otro APK: la app no permite
+cambiar el modo ni la URL. El modo y la URL compilados siempre mandan; versiones
+anteriores guardaban estos valores en el teléfono, y la app los borra al
+arrancar.
 
-Para cambiar de entorno, edita `.env` y vuelve a compilar, o cambia el modo y la
-URL en **Conexión y demo** y pulsa *Guardar*.
+Lo que hace la app en modo real:
 
-Si usas el backend del canal móvil en tu PC, la URL depende de dónde corre la
-app: en el emulador de Android tu PC es `10.0.2.2`; en un teléfono por USB usa
-`127.0.0.1` después de `adb reverse tcp:<puerto> tcp:<puerto>`.
+- **Acceso** con correo y contraseña (`POST /auth/login` y `GET /auth/me`).
+  Solo admite cuentas `PATIENT` activas con perfil de paciente.
+- **Inicio** con los trámites activos de `GET /mobile/journeys`: estado, paso,
+  estudio, clínica y los primeros caracteres del folio (UUID).
+- **Trámite:** recorrido estudio → clínica → revisión → *pendiente de
+  confirmación* (`PENDING_CONFIRMATION`), con los catálogos de `/studies` y
+  `/clinics`. También permite cancelar. Muestra el folio completo para
+  compararlo con el sitio web y el Call Center, y el historial con el canal tal
+  como lo devuelve la API (`demo-web`, `demo-mobile`, `demo-callcenter`...).
+  Se vuelve a leer al regresar a la app, para ver el avance de otros canales.
+- **Nueva cita** crea un trámite con `POST /mobile/journeys` y abre el
+  selector de estudio.
+- **No disponible todavía**, y así se muestra en la app: elegir fecha y hora,
+  confirmar la cita y avisar por WhatsApp o Call Center desde la app. La API
+  central no lo ofrece al canal móvil.
 
-### API de producción (referencia)
+### Sesión, vencimiento y cambios pendientes (modo real)
 
-Fuente: `docs/openapi.json` de la rama `main` del repositorio del orquestador
-del equipo (acceso restringido). La app no llama a estas rutas todavía.
+- La sesión dura lo que indique `expiresIn` al iniciar sesión. `docs/api-auth.md`
+  muestra 30 minutos como ejemplo; el valor de producción está pendiente de
+  confirmar con el equipo de backend. **No hay renovación automática**: la
+  app da la sesión por vencida 30 segundos antes y pide iniciar sesión de nuevo.
+  Antes de una demostración, inicia sesión justo antes de empezar.
+- Si un cambio no llega al servidor (sin red, `5xx` o `429`), la app lo
+  reintenta hasta 3 veces con el mismo contenido. Si sigue sin llegar, queda
+  **pendiente**: el trámite lo avisa, con *Reintentar* y *Descartar*, y no
+  admite otro cambio hasta resolverlo.
+- Los cambios pendientes **viven solo en memoria. Se pierden si se cierra la
+  app** y se descartan al cerrar sesión. Si la sesión vence, se conservan
+  mientras la app siga abierta y se pueden reenviar al volver a entrar con la
+  misma cuenta; otra cuenta nunca los ve. No hay que prometer frente al jurado
+  una persistencia que no existe.
 
-- URL base: `https://api.salud-digna.app/api/v1`
-- Autenticación: `POST /auth/login` con `email` y `password`. Responde
-  `accessToken` (JWT), `tokenType: "Bearer"`, `expiresIn` (segundos) y `user`.
-  Las demás rutas usan `Authorization: Bearer <accessToken>`. No hay cabecera
-  `X-Channel-Key`. El cliente solo maneja el JWT del paciente: la API central
-  conserva las credenciales del canal y obtiene los permisos de cada trámite.
+## 6. Compilar e instalar los APK
 
-| Método | Ruta | Uso |
-|--------|------|-----|
-| `GET` | `/mobile/journeys` | Trámites activos del paciente autenticado (`items`) |
-| `POST` | `/mobile/journeys` | Crear un trámite. Cuerpo `{ "type": "APPOINTMENT" }`; cabecera obligatoria `Idempotency-Key` |
-| `GET` | `/mobile/journeys/{journeyId}` | Estado: `id`, `status`, `type`, `createdAt`, `updatedAt` |
-| `GET` | `/mobile/journeys/{journeyId}/context` | Contexto: `journeyId`, `currentStep`, `version`, `externalRefs`, `updatedAt` |
-| `GET` | `/mobile/journeys/{journeyId}/history` | Historial: `items` y `nextCursor`; parámetros `limit` y `cursor` |
-| `POST` | `/mobile/journeys/{journeyId}/events` | Registrar un avance: `externalEventId`, `type` (`JOURNEY_CONTEXT_UPDATED` o `JOURNEY_STATUS_CHANGED`), `schemaVersion: 1`, `occurredAt`, `payload` |
-
-`GET /api/v1/health` responde `{"status":"ok"}` sin autenticación. Sin token,
-las rutas `/mobile/journeys` responden `401`.
-
-## 6. Compilar y ejecutar el APK de depuración
-
-Compilar (verificado desde un clon limpio):
+Compilación de depuración (verificada desde un clon limpio):
 
 ```bash
 flutter build apk --debug --dart-define-from-file=.env
@@ -163,51 +174,65 @@ flutter build apk --debug --dart-define-from-file=.env
 
 El APK queda en `build/app/outputs/flutter-apk/app-debug.apk`.
 
-Instalar en un teléfono (pendiente de verificar en este repositorio):
+### Los dos APK de la demostración
+
+Para no recompilar en el escenario, se preparan dos APK: uno simulado y uno
+real. Ambos usan el mismo identificador de aplicación, así que en un mismo
+teléfono solo puede haber uno instalado a la vez: para cambiar, se instala el
+otro encima. Los dos comandos compilan; la ruta de salida es la misma, así que
+hay que copiar el primero antes de compilar el segundo:
+
+```bash
+flutter build apk --release --dart-define=MOCK_MODE=true
+cp build/app/outputs/flutter-apk/app-release.apk salud-digna-simulado.apk
+
+flutter build apk --release --dart-define=MOCK_MODE=false
+cp build/app/outputs/flutter-apk/app-release.apk salud-digna-real.apk
+```
+
+El APK de release se firma con las claves de depuración
+(`android/app/build.gradle.kts`): sirve para instalarlo directamente, no para
+publicarlo en una tienda. Los APK no se versionan (`*.apk` está en
+`.gitignore`).
+
+### Instalar en un teléfono (pendiente de verificar)
 
 1. En el teléfono, activa las *Opciones de desarrollador* y la *Depuración
    USB*, y conéctalo por USB.
 2. Comprueba que aparece con `adb devices` (o `flutter devices`). Usa el `adb`
    del Android SDK que configuraste en Flutter (ver sección 9).
-3. Instala y abre:
+3. Instala, por ejemplo, `adb install -r salud-digna-real.apk`. Con más de un
+   dispositivo, añade `-s <serie>`. Después abre *Salud Digna* desde el lanzador.
 
-   ```bash
-   adb install -r build/app/outputs/flutter-apk/app-debug.apk
-   ```
-
-   Con más de un dispositivo conectado, indica cuál con
-   `adb -s <serie> install -r ...`. Después abre la app *Salud Digna* desde el
-   lanzador del teléfono.
-
-`flutter run --dart-define-from-file=.env` compila e instala en un paso; está
-pendiente de verificar. `integration_test/app_test.dart` contiene el recorrido
-completo para ejecutarse en un dispositivo; también está pendiente de verificar.
+`flutter run --dart-define-from-file=.env` y `integration_test/app_test.dart`
+(recorrido del modo simulado en un dispositivo) están pendientes de verificar.
 
 ## 7. Credenciales de prueba
 
-Los pacientes de prueba son ficticios. Este README no incluye sus valores.
+Este README no incluye valores de credenciales.
 
 | Entorno | Qué se necesita | Cómo obtenerlo |
 |---------|-----------------|----------------|
-| Simulado | Identificador del paciente y código de verificación | La pantalla de identificación los muestra en *Datos de prueba para la demo*; al tocar un paciente se rellenan. No hay que solicitarlos. |
-| Backend del canal móvil | `CHANNEL_KEY` y los pacientes sembrados en ese backend | Al equipo que opera el backend. Medio de solicitud pendiente de definir. |
-| API de producción | Cuenta de paciente (correo y contraseña) | Al equipo que opera el orquestador. Medio de solicitud pendiente de definir. La app aún no usa esta API. |
+| Simulado | Identificador del paciente ficticio y código de verificación | La pantalla de identificación los muestra en *Datos de prueba para la demo*; al tocar un paciente se rellenan. No hay que solicitarlos. |
+| Real | Una cuenta de paciente (correo y contraseña), rol `PATIENT`, con perfil de paciente vinculado | Al equipo de backend, por un canal privado. Pendiente de recibir. |
 
 La API key del orquestador nunca va en la app.
 
 ## 8. Demo de continuidad omnicanal
 
-Entorno: simulado. Los pasos de los canales sitio web y WhatsApp vienen
-sembrados en el orquestador simulado; no se ejecutan en esos canales. Todo lo
-que sigue se hace en la app.
+### Modo simulado
+
+Los pasos de los canales sitio web y WhatsApp vienen sembrados en el
+orquestador simulado; no se ejecutan en esos canales. Todo lo que sigue se
+hace en la app (APK simulado).
 
 Estado de verificación: los pasos están cubiertos por las pruebas de widgets
 `test/ui_flow_test.dart` y `test/resume_flow_test.dart`, que pasan. La
 ejecución en un teléfono está pendiente de verificar.
 
-Preparación: abre **Conexión y demo** (engranaje), comprueba que
-*Orquestador simulado* esté activado y pulsa *Restablecer escenario de Ana*.
-Si hay una sesión abierta, ciérrala con *Cerrar sesión*.
+Preparación: abre **Conexión y demo** (engranaje), comprueba que muestre
+*Orquestador simulado* y pulsa *Restablecer escenario de Ana*. Si hay una
+sesión abierta, ciérrala con *Cerrar sesión*.
 
 | Paso | Canal | Qué haces | Qué debes ver |
 |------|-------|-----------|---------------|
@@ -223,6 +248,26 @@ Si hay una sesión abierta, ciérrala con *Cerrar sesión*.
 
 Al retomar un trámite, la app registra los eventos `REQUEST_RESUMED` y
 `CHANNEL_SWITCHED`.
+
+### Modo real: sitio web → app → Call Center
+
+**Pendiente de verificar.** Requiere la cuenta de paciente de prueba, que la
+integración móvil esté configurada en la API central y un trámite de Web
+vinculado a ese paciente. Las pruebas contra la API falsa cubren lo que la app
+muestra en los pasos 2 a 4 y el estado *Pendiente de confirmación*. No cubren
+que el historial reciba los eventos de `demo-mobile` y `demo-callcenter`: eso
+lo hace el servidor. El recorrido con los tres canales reales no se ha
+ejecutado.
+
+| Paso | Canal | Qué se hace | Qué debe verse |
+|------|-------|-------------|----------------|
+| 1 | Sitio web | El paciente inicia un trámite y elige un estudio. Se anota el folio (UUID). | El portal pide la clínica. |
+| 2 | App | Entra con la misma cuenta (APK real). | En el inicio, el trámite con el estudio, *Paso: Elegir clínica* y los primeros caracteres del folio. |
+| 3 | App | Abre el trámite. | El folio completo coincide con el del sitio web; *Historial entre canales* muestra eventos de `demo-web`. |
+| 4 | App | Pulsa *Elige tu clínica* y elige una. | *Paso actual: Revisión*; en el historial, un evento de `demo-mobile`. |
+| 5 | Sitio web | Recarga el trámite. | La clínica elegida en la app. |
+| 6 | Call Center | Con la autorización del paciente, el asesor abre el mismo trámite y lo deja pendiente de confirmación. | — |
+| 7 | App | Vuelve a la app o pulsa *Actualizar*. | Estado *Pendiente de confirmación*; en el historial, un evento de `demo-callcenter`. |
 
 ## 9. Resolución de problemas
 
@@ -246,39 +291,52 @@ instalado, el `adb` del `PATH` puede no ser el del SDK que usa Flutter.
 `flutter doctor -v` muestra la ruta del SDK configurado; usa el `adb` de su
 carpeta `platform-tools` y, con varios dispositivos, añade `-s <serie>`.
 
-**La app no arranca en el estado esperado tras reinstalar.** `adb install -r`
-conserva los datos: la sesión, el modo y la URL guardados en Conexión y demo
-siguen vigentes. Cierra sesión y usa *Restablecer escenario de Ana*, o borra
-los datos de la app.
+**La app simulada no arranca en el estado esperado tras reinstalar.**
+`adb install -r` conserva los datos: la sesión y el escenario guardados siguen
+vigentes. Cierra sesión y usa *Restablecer escenario de Ana*, o borra los datos
+de la app.
 
 **Con la caída simulada no cargan los horarios.** Es lo esperado: también
 fallan las lecturas. Para la prueba de resiliencia cambia el estudio o la
 clínica.
 
-**La identificación falla con `404` al usar la API de producción.** La app no es
-compatible todavía con `https://api.salud-digna.app/api/v1` (ver sección 1).
-Usa el modo simulado.
+**Modo real: qué significa cada aviso.** Según `docs/api-mobile-journeys.md`:
+
+| Lo que muestra la app | Código | Qué revisar |
+|-----------------------|--------|-------------|
+| *Aún no tienes trámites vinculados* | `404` al listar | La identidad institucional del paciente no tiene trámites vinculados. Si debería tenerlos, el equipo de backend debe revisar el vínculo. En una compilación de depuración, el log `[modo real] GET /mobile/journeys → 404` lo distingue de un `200` sin trámites. |
+| *Falló la comunicación con el orquestador* o *La integración no está disponible por ahora* | `502` / `503` | Problema de servicio o configuración de la integración móvil en la API central. Es del backend. |
+| *El orquestador tardó demasiado* | `504` | Tiempo de espera del orquestador. |
+| *Demasiadas solicitudes. Intenta en N s.* | `429` | Límite temporal; esperar los segundos indicados. El acceso comparte hasta 10 intentos por IP cada 15 minutos (`docs/api-auth.md`). |
+| *Tu sesión venció* | `401` | Volver a iniciar sesión. |
+| *Esta app es solo para cuentas de paciente* | — | La cuenta no es `PATIENT`, no está activa o no tiene perfil de paciente. |
+| *La app no está bien configurada* | — | `CHANNEL_BACKEND_URL` no empieza con `https://`. Recompilar. |
 
 ## Estructura del proyecto
 
 ```
 lib/
-  main.dart                          arranque, tema, inyección de estado
-  core/config.dart                   modo, URL y clave (variables de entorno + ajustes)
+  main.dart                          arranque: elige el modo según MOCK_MODE
+  core/config.dart                   MOCK_MODE y CHANNEL_BACKEND_URL (del compilado)
   core/theme.dart                    sistema visual y modo oscuro
-  models/models.dart                 evento, trámite, estados, errores
-  data/catalog.dart                  estudios, clínicas y horarios ficticios
-  services/orchestrator_client.dart  interfaz común de los dos modos
-  services/http_orchestrator.dart    cliente HTTP (contrato de CONTRATO_API.md)
+  real/api_models.dart               modelos del contrato de la API central
+  real/central_api.dart              cliente HTTP de la API central (solo JWT)
+  real/real_state.dart               sesión en memoria, trámites, catálogos y escrituras
+  real/ui/                           acceso, inicio, trámite y conexión del modo real
+  models/models.dart                 modelos del modo simulado
+  data/catalog.dart                  estudios, clínicas y horarios ficticios (simulado)
+  services/orchestrator_client.dart  interfaz del orquestador simulado
   services/mock_orchestrator.dart    orquestador simulado
-  services/outbox.dart               cola persistente de eventos con reintentos
+  services/outbox.dart               cola persistente de eventos (simulado)
   services/contact_launcher.dart     WhatsApp y Call Center
-  state/app_state.dart               sesión, trámites y envío de eventos
-  screens/                           identificación, inicio, trámite, nueva cita, conexión
+  state/app_state.dart               estado del modo simulado
+  screens/                           pantallas del modo simulado
   ui/layout/                         diseño adaptable
-  widgets/                           componentes
+  widgets/                           componentes compartidos
 test/                                pruebas unitarias y de widgets
-integration_test/                    recorrido en dispositivo
+test/support/fake_central_api.dart   API central falsa para las pruebas
+integration_test/                    recorrido del modo simulado en dispositivo
 ```
 
-Principios de diseño de la interfaz: [`UX.md`](UX.md).
+Contrato con la API central: [`CONTRATO_API.md`](CONTRATO_API.md). Principios
+de diseño de la interfaz: [`UX.md`](UX.md).
