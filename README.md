@@ -1,52 +1,64 @@
 # Salud Digna · App móvil (canal MOBILE_APP)
 
-App Flutter del canal **MOBILE_APP** para el reto *Software Inteligente* de
-Salud Digna (Hackatec): un **orquestador omnicanal** que permite al paciente
-iniciar un trámite en un canal (Web, WhatsApp, Call Center) y continuarlo en
-otro sin repetir información.
+## 1. Qué es y cómo encaja en el sistema
 
-La app identifica al paciente, le muestra sus trámites pendientes con el
-contexto que dejó en otros canales, le permite retomarlos o iniciar uno nuevo
-y notifica cada paso al orquestador como evento de negocio.
+App Flutter para Android del canal **MOBILE_APP** del reto *Software
+Inteligente* de Salud Digna (Hackatec). El sistema omnicanal permite que un
+paciente inicie un trámite en un canal (sitio web, WhatsApp, Call Center o app)
+y lo continúe en otro sin repetir información. Esta app es el canal móvil: el
+paciente se identifica, ve sus trámites pendientes con el contexto que dejó en
+otros canales, los retoma o inicia uno nuevo, y cada paso queda registrado como
+evento en el historial del trámite.
 
-## Cómo se relaciona con el resto del sistema
+### Estado actual de la integración
 
-```
-App Flutter (este repositorio)
-   │  contrato app ↔ backend (CONTRATO_API.md)
-   │  cabeceras: X-Channel-Key, Authorization: Bearer <token de paciente>
-   ▼
-Backend del canal móvil (mobile_channel_backend, repositorio aparte)
-   │  guarda la API key del orquestador y traduce los eventos de la app
-   ▼
-Orquestador omnicanal (servicio del equipo, acceso con API key privada)
-```
+La app tiene dos implementaciones del mismo cliente (`OrchestratorClient`):
 
-- **La app nunca contiene la API key del orquestador.** Solo conoce la URL y la
-  clave de canal de *su* backend; ese backend es quien firma las llamadas al
-  orquestador.
-- La app incluye además un **orquestador simulado** que implementa el mismo
-  contrato dentro del dispositivo. Con él la demo funciona sin backend.
-- Opcionalmente, el botón "¿Necesitas ayuda?" puede abrir el simulador de
-  WhatsApp del equipo (esquema `saluddigna-wa://`) en lugar de WhatsApp real.
+| Modo | Qué hace | Estado |
+|------|----------|--------|
+| **Simulado** (`MOCK_MODE=true`, por omisión) | Un orquestador en memoria dentro de la app, con pacientes y un trámite sembrados. No necesita red. | Verificado en dispositivo y con 185 pruebas automáticas. |
+| **HTTP** (`MOCK_MODE=false`) | Llama a un backend intermedio del canal móvil con el contrato descrito en [`CONTRATO_API.md`](CONTRATO_API.md). | Ese backend no está publicado en ningún repositorio. Pendiente de verificar desde este repositorio. |
 
-| Pilar del reto    | Cómo lo cubre la app                                                                 |
-|-------------------|--------------------------------------------------------------------------------------|
-| Identidad         | Identificadores tipados (`PATIENT_ID`, `PHONE`, `EMAIL`) + código de verificación     |
-| Contexto y estado | Recupera estudio, clínica y horario elegidos en otro canal; muestra el siguiente paso |
-| Trazabilidad      | Línea de tiempo unificada por canal; emite `CONTEXT_RESUMED` al retomar               |
-| Seguridad         | Token de paciente, clave de canal, aislamiento entre pacientes, datos mínimos         |
-| Resiliencia       | Outbox persistente con reintentos; idempotencia por `eventId`; control de versión     |
+**La app todavía no consume la API de producción.** La API desplegada usa otras
+rutas y otra autenticación (ver sección 5). Las rutas que llama el cliente HTTP
+de la app (`/api/v1/identity/verify`, `/api/v1/integrations/events`,
+`/api/v1/me/journeys`, `/api/v1/journeys/{id}`) responden `404` en producción.
 
-## Requisitos
+### Qué guarda la app en el dispositivo
 
-- **Flutter 3.47** o superior (Dart 3.13). Comprueba con `flutter doctor`.
-- **Android SDK** con un emulador o un teléfono con depuración USB.
-- JDK 17 (el que incluye Android Studio sirve).
-- Opcional, para el modo con backend: el backend del canal móvil en ejecución
-  y `adb` para conectar un teléfono por USB.
+En `SharedPreferences`: la sesión del paciente (incluido su token), la URL y la
+clave de canal configuradas, el modo, los eventos pendientes de envío (outbox) y,
+en modo simulado, los datos del orquestador simulado. La app **no** contiene ni
+guarda la API key del orquestador, credenciales Ed25519 ni access-grants. El
+"código de acceso" para vincular un trámite de otro canal se envía una sola vez
+y no se almacena.
 
-## Instalación
+## 2. Requisitos previos
+
+Versiones verificadas al compilar y ejecutar este repositorio:
+
+| Herramienta | Versión verificada | Origen del requisito |
+|-------------|--------------------|----------------------|
+| Flutter | 3.47.5, canal stable | Versión con la que se compiló y probó |
+| Dart | 3.13.4 (incluido en Flutter 3.47.5) | `pubspec.yaml` exige `>=3.13.4 <4.0.0` |
+| Android SDK | API 36 (compileSdk y targetSdk) | Valores de Flutter 3.47.5 usados por `android/app/build.gradle.kts` |
+| Android mínimo del dispositivo | 7.0 (API 24) | `minSdk = flutter.minSdkVersion` (24 en Flutter 3.47.5) |
+| JDK | 17 o superior; se compiló con el JDK 21 de Android Studio | El proyecto compila con objetivo Java 17 |
+| Gradle / Android Gradle Plugin / Kotlin | 9.3.1 / 9.1.0 / 2.4.0 | `gradle-wrapper.properties` y `settings.gradle.kts`; Gradle se descarga solo |
+| Git | cualquiera reciente | Para clonar |
+
+Dispositivo de prueba usado: teléfono Android 13 (API 33) por USB.
+
+Dependencias de la app (`pubspec.yaml`, versiones de `pubspec.lock`): `http`
+1.6.0, `shared_preferences` 2.5.6, `uuid` 4.6.0 y `cupertino_icons` 1.0.9.
+Desarrollo: `flutter_test`, `integration_test` y `flutter_lints` 6.0.0.
+
+Comprueba tu entorno con `flutter doctor -v`. Si Flutter no usa un JDK 17 o
+superior, indícale cuál con `flutter config --jdk-dir <ruta del JDK>`.
+
+## 3. Instalación
+
+Probado desde un clon limpio:
 
 ```bash
 git clone https://github.com/Natha45654/salud-digna-movil.git
@@ -55,145 +67,186 @@ flutter pub get
 cp .env.example .env        # en PowerShell: Copy-Item .env.example .env
 ```
 
-## Variables de entorno
+En Windows, `flutter pub get` puede terminar con el aviso *"Building with
+plugins requires symlink support"* y código de salida 1 aunque las dependencias
+sí se resolvieron (ver sección 9).
 
-La configuración se lee al compilar desde `.env` con
-`--dart-define-from-file=.env`. El archivo `.env` **no se versiona**;
-`.env.example` lista todas las variables. Una variable vacía equivale a no
-definida.
+## 4. Configuración
 
-| Variable              | Para qué sirve                                                                       | Si se deja vacía            |
-|-----------------------|--------------------------------------------------------------------------------------|-----------------------------|
-| `MOCK_MODE`           | `true`: orquestador simulado en el dispositivo. `false`: usa el backend.            | `true`                      |
-| `CHANNEL_BACKEND_URL` | URL base del backend del canal móvil, sin `/` final.                                | Se configura en la app      |
-| `CHANNEL_KEY`         | Clave de canal (`X-Channel-Key`). Debe coincidir con `APP_CHANNEL_KEY` del backend. | Se configura en la app      |
-| `WHATSAPP_SIMULATOR`  | `true`: "¿Necesitas ayuda?" abre el simulador de WhatsApp del equipo.               | `false` (WhatsApp real)     |
-| `SD_WHATSAPP`         | Número de WhatsApp de contacto, solo dígitos con lada (`52` + 10 dígitos).          | Abre WhatsApp sin número    |
-| `SD_CALL_CENTER`      | Número del Call Center, solo dígitos.                                                | Abre el marcador sin número |
+La configuración se lee **al compilar** desde `.env` con
+`--dart-define-from-file=.env`. El archivo `.env` no se versiona;
+`.env.example` contiene las mismas variables vacías. Una variable vacía equivale
+a no definida.
 
-La URL y la clave también se pueden cambiar en la app, en **Conexión y demo**
-(icono de engranaje en la pantalla de identificación). Lo que se guarde ahí
-tiene prioridad sobre `.env` hasta que se borren los datos de la app.
+| Variable | Para qué sirve | Si está vacía | Ejemplo ficticio |
+|----------|----------------|---------------|------------------|
+| `MOCK_MODE` | `true`: orquestador simulado. `false`: cliente HTTP. | `true` | `true` |
+| `CHANNEL_BACKEND_URL` | URL base del backend del canal móvil, sin `/` final. La app le añade `/api/v1/...`. | Se configura en la app | `https://backend-canal.example.com` |
+| `CHANNEL_KEY` | Valor de la cabecera `X-Channel-Key` hacia ese backend. | Se configura en la app | `clave-de-ejemplo` |
+| `WHATSAPP_SIMULATOR` | `true`: "¿Necesitas ayuda?" abre el simulador de WhatsApp del equipo (`saluddigna-wa://`). | `false` (abre `wa.me`) | `false` |
+| `SD_WHATSAPP` | Número de WhatsApp de contacto, solo dígitos con lada. | Abre WhatsApp sin número | `525500000000` |
+| `SD_CALL_CENTER` | Número del Call Center, solo dígitos. | Abre el marcador sin número | `5500000000` |
 
-## Ejecutar y compilar
+Dentro de la app, el icono de engranaje (**Conexión y demo**) permite cambiar el
+modo, la URL y la clave. Lo guardado ahí tiene prioridad sobre `.env` y se
+conserva al reinstalar con `adb install -r`; para volver a los valores de `.env`
+hay que borrar los datos de la app.
 
-```bash
-flutter run --dart-define-from-file=.env
-```
+## 5. Cómo apuntar la app a la API y cambiar de entorno
 
-**APK de depuración:**
+### Entornos
+
+| Entorno | Cómo se activa | Estado |
+|---------|----------------|--------|
+| Simulado en el dispositivo | `MOCK_MODE=true` o vacío, o el interruptor *Orquestador simulado* en Conexión y demo | Funciona. Es el entorno de la demo. |
+| Backend del canal móvil | `MOCK_MODE=false`, `CHANNEL_BACKEND_URL` y `CHANNEL_KEY`; recompilar | Pendiente de verificar: el backend no está publicado. |
+| API de producción | No disponible | La app no es compatible todavía con esta API. |
+
+Para cambiar de entorno, edita `.env` y vuelve a compilar, o cambia el modo y la
+URL en **Conexión y demo** y pulsa *Guardar*.
+
+Si usas el backend del canal móvil en tu PC, la URL depende de dónde corre la
+app: en el emulador de Android tu PC es `10.0.2.2`; en un teléfono por USB usa
+`127.0.0.1` después de `adb reverse tcp:<puerto> tcp:<puerto>`.
+
+### API de producción (referencia)
+
+Fuente: `docs/openapi.json` de la rama `main` del repositorio del orquestador
+del equipo (acceso restringido). La app no llama a estas rutas todavía.
+
+- URL base: `https://api.salud-digna.app/api/v1`
+- Autenticación: `POST /auth/login` con `email` y `password`. Responde
+  `accessToken` (JWT), `tokenType: "Bearer"`, `expiresIn` (segundos) y `user`.
+  Las demás rutas usan `Authorization: Bearer <accessToken>`. No hay cabecera
+  `X-Channel-Key`.
+
+| Método | Ruta | Uso |
+|--------|------|-----|
+| `GET` | `/mobile/journeys` | Trámites activos del paciente autenticado (`items`) |
+| `POST` | `/mobile/journeys` | Crear un trámite. Cuerpo `{ "type": "APPOINTMENT" }`; cabecera obligatoria `Idempotency-Key` |
+| `GET` | `/mobile/journeys/{journeyId}` | Estado: `id`, `status`, `type`, `createdAt`, `updatedAt` |
+| `GET` | `/mobile/journeys/{journeyId}/context` | Contexto: `journeyId`, `currentStep`, `version`, `externalRefs`, `updatedAt` |
+| `GET` | `/mobile/journeys/{journeyId}/history` | Historial: `items` y `nextCursor`; parámetros `limit` y `cursor` |
+| `POST` | `/mobile/journeys/{journeyId}/events` | Registrar un avance: `externalEventId`, `type` (`JOURNEY_CONTEXT_UPDATED` o `JOURNEY_STATUS_CHANGED`), `schemaVersion: 1`, `occurredAt`, `payload` |
+
+`GET /api/v1/health` responde `{"status":"ok"}` sin autenticación.
+
+## 6. Compilar y ejecutar el APK de depuración
 
 ```bash
 flutter build apk --debug --dart-define-from-file=.env
-```
-
-El APK queda en `build/app/outputs/flutter-apk/app-debug.apk`. Para instalarlo
-en un teléfono conectado:
-
-```bash
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-**Pruebas:**
+El APK queda en `build/app/outputs/flutter-apk/app-debug.apk`. Con más de un
+dispositivo conectado, indica cuál con `adb -s <serie> install -r ...`
+(`adb devices` lista las series). Después abre la app *Salud Digna* desde el
+lanzador del teléfono.
+
+`flutter run --dart-define-from-file=.env` compila e instala en un paso; está
+pendiente de verificar en este repositorio.
+
+Pruebas:
 
 ```bash
 flutter analyze
-flutter test                                   # reglas del orquestador simulado y diseño adaptable
-flutter test integration_test/app_test.dart    # en un dispositivo; desinstala la app al terminar
+flutter test        # 185 pruebas, sin dispositivo
 ```
 
-## Apuntar la app a la API
+`integration_test/app_test.dart` contiene el recorrido completo en dispositivo;
+está pendiente de verificar.
 
-Por omisión (`MOCK_MODE` vacío o `true`) la app no necesita ningún servidor.
-Para usar el backend del canal móvil:
+## 7. Credenciales de prueba
 
-1. Arranca el backend del canal móvil siguiendo su README (por omisión escucha
-   en el puerto `3300`).
-2. En `.env`, define `MOCK_MODE=false`, `CHANNEL_BACKEND_URL` y `CHANNEL_KEY`.
-3. Elige la URL según dónde corre la app:
+Los pacientes de prueba son ficticios. Este README no incluye sus valores.
 
-   | La app corre en…               | `CHANNEL_BACKEND_URL`                                                     |
-   |--------------------------------|---------------------------------------------------------------------------|
-   | Emulador Android               | `http://10.0.2.2:<puerto>` (así ve el emulador a tu PC)                   |
-   | Teléfono por USB               | `http://127.0.0.1:<puerto>` tras `adb reverse tcp:<puerto> tcp:<puerto>`  |
-   | Teléfono en la misma red Wi-Fi | `http://<IP de tu PC>:<puerto>`                                           |
-   | Backend desplegado             | `https://<dominio del backend>`                                           |
+| Entorno | Qué se necesita | Cómo obtenerlo |
+|---------|-----------------|----------------|
+| Simulado | Identificador del paciente y código de verificación | La pantalla de identificación los muestra en *Datos de prueba para la demo*; al tocar un paciente se rellenan. No hay que solicitarlos. |
+| Backend del canal móvil | `CHANNEL_KEY` y los pacientes sembrados en ese backend | Al equipo que opera el backend. Medio de solicitud pendiente de definir. |
+| API de producción | Cuenta de paciente (correo y contraseña) | Al equipo que opera el orquestador. Medio de solicitud pendiente de definir. La app aún no usa esta API. |
 
-   Con `adb reverse` usa `127.0.0.1`, no `localhost`: en Android, `localhost`
-   puede resolver a IPv6 y el túnel es IPv4.
-4. Vuelve a compilar con `--dart-define-from-file=.env`.
+La API key del orquestador nunca va en la app.
 
-El contrato que la app espera del backend está en
-[`CONTRATO_API.md`](CONTRATO_API.md).
+## 8. Demo de continuidad omnicanal
 
-## Credenciales de prueba
+Entorno: simulado. Los pasos de los canales sitio web y WhatsApp vienen
+sembrados en el orquestador simulado; no se ejecutan en esos canales. Todo lo
+que sigue se hace en la app y fue verificado en un teléfono Android 13.
 
-Los pacientes son **ficticios**; la app no contiene datos reales. Este README
-no incluye valores de credenciales. Hacen falta:
+Preparación: abre **Conexión y demo** (engranaje), comprueba que
+*Orquestador simulado* esté activado y pulsa *Restablecer escenario de Ana*.
+Si hay una sesión abierta, ciérrala con *Cerrar sesión*.
 
-| Credencial                                   | Dónde se usa                        | Dónde obtenerla                                       |
-|----------------------------------------------|-------------------------------------|-------------------------------------------------------|
-| Identificador de un paciente de prueba (número de paciente, teléfono o correo) | Identificación, paso 1 | Ver abajo                                   |
-| Código de verificación (OTP) de ese paciente | Identificación, paso 2              | Ver abajo                                             |
-| Clave de canal (`CHANNEL_KEY`)               | Solo en modo backend                | La misma que `APP_CHANNEL_KEY` del backend del canal  |
-| API key del orquestador                      | **Nunca en la app**; solo en el backend del canal | Responsable del orquestador en el equipo |
+| Paso | Canal | Qué haces | Qué debes ver |
+|------|-------|-----------|---------------|
+| 0 | Sitio web, luego WhatsApp (sembrado) | Nada: el escenario ya contiene que Ana eligió estudio y clínica en el sitio web y el horario en WhatsApp. | — |
+| 1 | App | En *Datos de prueba para la demo* toca a Ana García, pulsa *Enviar código de verificación*, cambia el código por uno incorrecto y pulsa *Continuar*. | El aviso *Código de verificación incorrecto*. |
+| 2 | App | Escribe el código correcto de Ana y pulsa *Continuar*. | *Hola, Ana* y su ficha marcada como *Verificada*. |
+| 3 | App | Pulsa *Retomar trámite de otro canal*. | El trámite *Ultrasonido abdominal*, clínica, estado *Lista para confirmar*, paso 4 de 4 y *Lo dejaste en WhatsApp*. |
+| 4 | App | Toca el trámite y despliega *Historial de atención*. | Estudio, clínica y horario ya elegidos. En el historial, eventos de *Sitio Web*, *WhatsApp* y *App móvil*, incluidos *Trámite retomado* y *Cambio de canal (De WhatsApp a App móvil)*. |
+| 5 | App | Pulsa *Confirma tu cita* y luego *Confirmar* en el diálogo. | En el historial: *Confirmación solicitada* (App móvil) y *Cita confirmada* con un folio (Sistema de citas). |
+| 6 | App | Restablece el escenario, abre de nuevo el trámite de Ana, activa *Simular caída del orquestador* en Conexión y demo, vuelve y cambia el **estudio**. En Conexión y demo, desactiva la caída y pulsa *Reenviar*. | Primero *1 evento(s) sin entregar* con el error simulado; después *Todo entregado*. Al actualizar el trámite, un solo evento *Estudio seleccionado*. |
+| 7 | App | Cierra sesión y entra como Luis Hernández. Pulsa *Retomar trámite de otro canal*. | *No tienes trámites pendientes*: Luis no ve el trámite de Ana. *Nueva cita* abre *Agenda un estudio*. |
+| 8 | App | Conexión y demo → *Restablecer escenario de Ana*. | El escenario queda listo para repetir la demo. |
 
-- **Modo simulado:** la pantalla de identificación muestra la sección
-  *Datos de prueba para la demo* con los dos pacientes ficticios. Al tocar uno
-  se rellenan su identificador y su código.
-- **Modo backend:** los pacientes de prueba son los que tenga sembrados el
-  backend del canal móvil (consulta su README).
-- **Jurado:** pendiente de definir cómo se entregan las credenciales.
-  <!-- TODO: indicar el medio de entrega (p. ej. formulario de entrega del reto). No escribir los valores aquí. -->
+Al retomar un trámite, la app registra los eventos `REQUEST_RESUMED` y
+`CHANNEL_SWITCHED`.
 
-| Paciente ficticio | Escenario                                                            |
-|-------------------|----------------------------------------------------------------------|
-| Ana García        | Tiene un trámite pendiente iniciado en Web y continuado en WhatsApp  |
-| Luis Hernández    | No tiene trámites; inicia uno nuevo desde la app                     |
+## 9. Resolución de problemas
 
-## Reproducir la demo
+**`flutter` no responde.** En una máquina de prueba, `flutter` del PATH apuntaba
+a una segunda copia del SDK y se quedaba bloqueado sin salida. `flutter doctor`
+lo advierte con *"`flutter` on your path resolves to ..., which is not inside
+your current Flutter SDK checkout"*. Ejecuta Flutter desde la carpeta `bin` del
+SDK que usas o corrige el PATH.
 
-Funciona en modo simulado, sin backend.
+**`flutter pub get` termina con error de symlinks.** En Windows aparece
+*"Building with plugins requires symlink support. Please enable Developer Mode"*
+y el código de salida es 1, pero las dependencias se resuelven (existe
+`.dart_tool/package_config.json`) y el APK de Android compila. Para quitar el
+aviso, activa el Modo de desarrollador de Windows.
 
-1. Compila e instala el APK de depuración (ver arriba) con `MOCK_MODE` vacío
-   o en `true`.
-2. **Identidad.** En *Datos de prueba para la demo*, toca a Ana, pulsa
-   *Enviar código* y luego *Continuar*. Un código incorrecto se rechaza.
-3. **Contexto.** En Inicio, pulsa *Retomar trámite de otro canal*: aparecen el
-   estudio, la clínica y el canal donde lo dejó.
-4. **Trazabilidad.** Abre el trámite: se ven el contexto completo y el
-   historial con los eventos de Web y WhatsApp. La app registra
-   `CONTEXT_RESUMED`.
-5. **Continuidad.** Pulsa *Confirma tu cita*: el trámite pasa a cita
-   confirmada con su folio.
-6. **Resiliencia.** En *Conexión y demo* activa *Simular caída del
-   orquestador* y haz un cambio en un trámite abierto: el evento queda en la
-   cola con su error. Desactiva la caída y pulsa *Reenviar*: se entrega una
-   sola vez.
-7. **Autorización.** Cierra sesión e identifícate como Luis: no ve el trámite
-   de Ana. Puede iniciar uno nuevo desde *Agenda un estudio*.
-8. Para repetir la demo: *Conexión y demo* → *Restablecer escenario de Ana*.
+**`flutter doctor` avisa de varios `adb`.** Si hay más de un Android SDK
+instalado, usa el `adb` del SDK que configuraste en Flutter y, con varios
+dispositivos, añade `-s <serie>`.
 
-## Estructura
+**La app no arranca en el estado esperado tras reinstalar.** `adb install -r`
+conserva los datos: la sesión, el modo y la URL guardados en Conexión y demo
+siguen vigentes. Cierra sesión y usa *Restablecer escenario de Ana*, o borra
+los datos de la app.
+
+**No aparece el botón *Continuar* en la identificación.** El teclado lo tapa;
+ciérralo o desplázate hacia abajo.
+
+**Con la caída simulada no cargan los horarios.** Es lo esperado: también
+fallan las lecturas. Para la prueba de resiliencia cambia el estudio o la
+clínica.
+
+**La identificación falla con `404` al usar la API de producción.** La app no es
+compatible todavía con `https://api.salud-digna.app/api/v1` (ver sección 1).
+Usa el modo simulado.
+
+## Estructura del proyecto
 
 ```
 lib/
   main.dart                          arranque, tema, inyección de estado
-  core/config.dart                   URL, clave de canal y modo (variables de entorno + ajustes)
-  core/theme.dart                    sistema visual: color, forma, espaciado, modo oscuro
-  models/models.dart                 contrato: evento canónico, trámite, estados, errores
+  core/config.dart                   modo, URL y clave (variables de entorno + ajustes)
+  core/theme.dart                    sistema visual y modo oscuro
+  models/models.dart                 evento, trámite, estados, errores
   data/catalog.dart                  estudios, clínicas y horarios ficticios
-  services/orchestrator_client.dart  interfaz común de los dos orquestadores
-  services/http_orchestrator.dart    cliente HTTP hacia el backend del canal
-  services/mock_orchestrator.dart    orquestador simulado con las reglas de negocio
+  services/orchestrator_client.dart  interfaz común de los dos modos
+  services/http_orchestrator.dart    cliente HTTP (contrato de CONTRATO_API.md)
+  services/mock_orchestrator.dart    orquestador simulado
   services/outbox.dart               cola persistente de eventos con reintentos
-  services/contact_launcher.dart     WhatsApp / Call Center
-  state/app_state.dart               sesión, trámites, construcción y envío de eventos
+  services/contact_launcher.dart     WhatsApp y Call Center
+  state/app_state.dart               sesión, trámites y envío de eventos
   screens/                           identificación, inicio, trámite, nueva cita, conexión
-  ui/layout/                         clases de tamaño de ventana y diseño adaptable
-  widgets/                           bloques de paciente y componentes comunes
+  ui/layout/                         diseño adaptable
+  widgets/                           componentes
 test/                                pruebas unitarias y de widgets
-integration_test/                    recorrido completo en dispositivo
+integration_test/                    recorrido en dispositivo
 ```
 
-Los principios de UI/UX aplicados están en [`UX.md`](UX.md).
+Principios de diseño de la interfaz: [`UX.md`](UX.md).
