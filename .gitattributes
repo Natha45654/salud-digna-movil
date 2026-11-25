@@ -1,0 +1,21 @@
+# Finales de línea LF en el repositorio y en la copia de trabajo, en cualquier
+# sistema. Flutter regenera los archivos de plataforma con LF; sin esto, en
+# Windows con core.autocrlf=true aparecen como modificados tras compilar.
+* text=auto eol=lf
+
+# Scripts de Windows: CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binarios.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.jar binary
+*.ttf binary
+*.otf binary
+*.apk binary
+*.aab binary

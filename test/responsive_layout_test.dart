@@ -241,7 +241,7 @@ void main() {
     });
   });
 
-  group('Barra vertical y panel (Nuevo prom)', () {
+  group('Barra vertical y panel lateral plegable', () {
     Finder inRail(Finder f) =>
         find.descendant(of: find.byKey(CollapsibleTwoPane.railKey), matching: f);
     Finder inPane(Finder f) =>
